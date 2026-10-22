@@ -8,5 +8,11 @@
   "android": {
     "allowMixedContent": false,
     "backgroundColor": "#0d0f13"
+  },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "css",
+      "initialViewportFitValueHint": "cover"
+    }
   }
 }
