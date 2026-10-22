@@ -1,7 +1,7 @@
 /* CodeNotes · 离线缓存
    策略：网络优先（保证更新及时），断网时回退到缓存。
    修改静态资源后把版本号 +1。 */
-const CACHE = 'codenotes-v1';
+const CACHE = 'codenotes-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -10,7 +10,9 @@ const ASSETS = [
   './zip.js',
   './highlight.js',
   './manifest.webmanifest',
-  './icon.svg'
+  './icon.svg',
+  './vendor/pdf.min.js',
+  './vendor/pdf.worker.min.js'
 ];
 
 self.addEventListener('install', (e) => {

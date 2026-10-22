@@ -16,10 +16,16 @@ const FILES = [
   'manifest.webmanifest',
   'sw.js',
   'icon.svg',
-  'demo-project.zip'
+  'demo-project.zip',
+  'vendor/pdf.min.js',
+  'vendor/pdf.worker.min.js'
 ];
 
 rmSync(dest, { recursive: true, force: true });
 mkdirSync(dest, { recursive: true });
-for (const f of FILES) copyFileSync(join(src, f), join(dest, f));
+for (const f of FILES) {
+  const target = join(dest, f);
+  mkdirSync(dirname(target), { recursive: true });
+  copyFileSync(join(src, f), target);
+}
 console.log(`[copy-web] ${FILES.length} 个文件 → mobile/www/`);

@@ -20,6 +20,8 @@
     project: null,
     sig: null,
     current: null,
+    pdfPath: null,
+    tab: 'code',
     text: '',
     lines: [],
     lang: 'plain',
@@ -622,17 +624,7 @@
   }
 
   function markActiveRow() {
-    $$('#tree .trow.active').forEach(function (el) { el.classList.remove('active'); });
-    if (!state.current) return;
-    var row = $('#tree .trow.file[data-path="' + cssEsc(state.current) + '"]');
-    if (row) {
-      row.classList.add('active');
-      var r = row.getBoundingClientRect();
-      var box = $('#tree').getBoundingClientRect();
-      if (r.top < box.top + 4 || r.bottom > box.bottom - 4) {
-        row.scrollIntoView({ block: 'nearest' });
-      }
-    }
+    highlightRow(state.current);
   }
 
   function cssEsc(s) {
@@ -645,6 +637,13 @@
   function openFile(path) {
     var entry = state.project && state.project.byPath.get(path);
     if (!entry) return;
+
+    if (/\.pdf$/i.test(path)) {
+      openPdfFromProject(path);
+      return;
+    }
+
+    if (document.body.classList.contains('tab-pdf')) setTab('code');
 
     flushComposer();
 
@@ -1282,6 +1281,257 @@
   }
 
   /* ------------------------------------------------------------
+     底部标签：代码 / PDF
+  ------------------------------------------------------------ */
+  var pdfState = { doc: null, page: 1, scale: 1, fit: true, name: '', token: 0 };
+
+  function setTab(tab) {
+    state.tab = tab;
+    var isPdf = tab === 'pdf';
+    document.body.classList.toggle('tab-pdf', isPdf);
+    $('#tabCode').classList.toggle('on', !isPdf);
+    $('#tabPdf').classList.toggle('on', isPdf);
+    $('#pdfView').hidden = !isPdf;
+
+    if (isPdf) {
+      $('#editor').hidden = true;
+      $('#welcome').hidden = true;
+      if (state.notesPanel) setNotesPanel(false);
+      if (state.project) highlightRow(state.pdfPath || state.current);
+      requestAnimationFrame(function () { if (pdfState.doc) renderPdfPage(); });
+    } else {
+      if (state.current) {
+        $('#editor').hidden = false;
+        $('#welcome').hidden = true;
+        if (state.project) highlightRow(state.current);
+      } else {
+        $('#editor').hidden = true;
+        $('#welcome').hidden = false;
+      }
+    }
+  }
+
+  function highlightRow(path) {
+    $$('#tree .trow.active').forEach(function (el) { el.classList.remove('active'); });
+    if (!path) return;
+    var row = $('#tree .trow[data-path="' + cssEsc(path) + '"]');
+    if (row) {
+      row.classList.add('active');
+      var r = row.getBoundingClientRect();
+      var box = $('#tree').getBoundingClientRect();
+      if (r.top < box.top + 4 || r.bottom > box.bottom - 4) row.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  /* ---------------- PDF ---------------- */
+  function openPdfFromProject(path) {
+    if (!state.project) return;
+    var entry = state.project.byPath.get(path);
+    if (!entry) return;
+    state.pdfPath = path;
+    highlightRow(path);
+    if (isMobile()) setSidebar(false, false);
+    openPdfData(new Uint8Array(entry.data), path.split('/').pop());
+  }
+
+  function openPdfFile(file) {
+    if (!file) return;
+    busy('正在打开 PDF…');
+    file.arrayBuffer().then(function (buf) {
+      openPdfData(new Uint8Array(buf), file.name);
+    }).catch(function () {
+      toast('读取 PDF 失败');
+    }).then(function () { idle(); });
+  }
+
+  async function openPdfData(data, name) {
+    setTab('pdf');
+    pdfState.name = name || 'PDF';
+    $('#pdfName').textContent = pdfState.name;
+    $('#pdfEmpty').hidden = true;
+    $('#pdfPage').textContent = '…';
+    $('#pdfCanvas').style.width = '0px';
+    $('#pdfCanvas').style.height = '0px';
+
+    try {
+      if (pdfState.doc) {
+        try { pdfState.doc.destroy(); } catch (e) { /* 忽略 */ }
+        pdfState.doc = null;
+      }
+      if (typeof pdfjsLib === 'undefined') throw new Error('PDF 引擎没有加载');
+      var task = pdfjsLib.getDocument({ data: data, isEvalSupported: false });
+      var doc = await task.promise;
+      pdfState.doc = doc;
+      pdfState.page = 1;
+      pdfState.fit = true;
+      await renderPdfPage();
+    } catch (err) {
+      console.error(err);
+      $('#pdfEmpty').hidden = false;
+      $('#pdfCanvas').style.width = '0px';
+      $('#pdfCanvas').style.height = '0px';
+      $('#pdfPage').textContent = '– / –';
+      toast('PDF 打开失败：' + ((err && err.message) || '未知错误'));
+    }
+  }
+
+  async function renderPdfPage() {
+    var doc = pdfState.doc;
+    if (!doc) return;
+    var pageNo = Math.min(Math.max(1, pdfState.page), doc.numPages);
+    pdfState.page = pageNo;
+    var token = ++pdfState.token;
+
+    var page = await doc.getPage(pageNo);
+    if (token !== pdfState.token) return;
+
+    var stage = $('#pdfStage');
+    var base = page.getViewport({ scale: 1 });
+    var scale;
+    if (pdfState.fit) {
+      var availW = Math.max(120, stage.clientWidth - 30);
+      var availH = Math.max(120, stage.clientHeight - 30);
+      scale = Math.min(availW / base.width, availH / base.height);
+    } else {
+      scale = pdfState.scale;
+    }
+    scale = Math.max(0.12, Math.min(scale, 6));
+
+    var vp = page.getViewport({ scale: scale });
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var canvas = $('#pdfCanvas');
+    var ctx = canvas.getContext('2d');
+    canvas.width = Math.max(1, Math.floor(vp.width * dpr));
+    canvas.height = Math.max(1, Math.floor(vp.height * dpr));
+    canvas.style.width = vp.width + 'px';
+    canvas.style.height = vp.height + 'px';
+
+    await page.render({
+      canvasContext: ctx,
+      viewport: vp,
+      transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null
+    }).promise;
+
+    if (token !== pdfState.token) return;
+    pdfState.scale = scale;
+    $('#pdfPage').textContent = pageNo + ' / ' + doc.numPages;
+    $('#pdfName').textContent = pdfState.name;
+    $('#pdfEmpty').hidden = true;
+  }
+
+  function pdfStep(dir) {
+    if (!pdfState.doc) return;
+    var next = pdfState.page + dir;
+    if (next < 1 || next > pdfState.doc.numPages) return;
+    pdfState.page = next;
+    renderPdfPage();
+  }
+
+  function pdfZoom(dir) {
+    if (!pdfState.doc) return;
+    pdfState.fit = false;
+    pdfState.scale = pdfState.scale * (dir > 0 ? 1.25 : 0.8);
+    renderPdfPage();
+  }
+
+  function pdfFit() {
+    if (!pdfState.doc) return;
+    pdfState.fit = true;
+    renderPdfPage();
+  }
+
+  /* ---------------- 直接选文件夹 ---------------- */
+  function dirPickerSupported() {
+    try { return 'webkitdirectory' in document.createElement('input'); } catch (e) { return false; }
+  }
+
+  function isSkippedPath(path) {
+    return /(^|\/)(node_modules|\.git|\.gradle|\.idea|\.vscode|__MACOSX)(\/|$)/.test(path) ||
+      /(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini)$/i.test(path);
+  }
+
+  function nativeDirAvailable() {
+    return !!(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.DirPicker);
+  }
+
+  function base64ToBytes(b64) {
+    var bin = atob(b64 || '');
+    var out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  function pickFolder() {
+    if (nativeDirAvailable()) { pickNativeDirectory(); return; }
+    if (dirPickerSupported()) { $('#dirInput').click(); return; }
+    toast('当前环境不支持直接选文件夹，请用压缩包导入');
+  }
+
+  async function pickNativeDirectory() {
+    busy('正在读取文件夹…');
+    try {
+      var res = await window.Capacitor.Plugins.DirPicker.pick();
+      var entries = [];
+      var skipped = 0;
+      var list = res.files || [];
+      for (var i = 0; i < list.length; i++) {
+        var f = list[i];
+        if (isSkippedPath(f.p)) { skipped++; continue; }
+        var bytes = base64ToBytes(f.d);
+        if (!bytes.length) { skipped++; continue; }
+        entries.push({ path: f.p, size: bytes.length, data: bytes });
+        if (i % 20 === 0) busy('正在解析… ' + (i + 1) + ' / ' + list.length);
+      }
+      if (!entries.length) throw new Error('文件夹里没有可读取的文件');
+      loadProject({ name: res.name || '文件夹', isZip: false, entries: entries, skipped: skipped });
+      toast('已导入文件夹「' + (res.name || '') + '」· ' + entries.length + ' 个文件' +
+        (res.truncated ? '（内容过多已截断）' : ''));
+    } catch (err) {
+      var msg = String((err && err.message) || err || '');
+      if (msg.indexOf('cancel') < 0) toast('读取文件夹失败：' + msg);
+    } finally {
+      idle();
+    }
+  }
+
+  async function importDirectory(fileList) {
+    var files = Array.prototype.slice.call(fileList || []);
+    if (!files.length) return;
+    busy('正在读取文件夹…');
+    try {
+      var entries = [];
+      var skipped = 0;
+      var total = 0;
+      var root = ((files[0].webkitRelativePath || '').split('/')[0]) || '文件夹';
+
+      for (var i = 0; i < files.length; i++) {
+        var f = files[i];
+        var rel = f.webkitRelativePath || f.name;
+        var path = rel.indexOf('/') >= 0 ? rel.split('/').slice(1).join('/') : rel;
+        if (!path) continue;
+        if (isSkippedPath(path) || f.size > 20 * 1024 * 1024) { skipped++; continue; }
+        if (total + f.size > 160 * 1024 * 1024) { skipped++; continue; }
+
+        var data = new Uint8Array(await f.arrayBuffer());
+        total += data.length;
+        entries.push({ path: path, size: data.length, data: data });
+        if (i % 6 === 0) busy('正在读取… ' + (i + 1) + ' / ' + files.length);
+      }
+
+      if (!entries.length) throw new Error('这个文件夹里没有可读取的文件');
+      var flat = !files.some(function (f) { return !!f.webkitRelativePath; });
+      loadProject({ name: root, isZip: false, entries: entries, skipped: skipped });
+      toast('已导入「' + root + '」· ' + entries.length + ' 个文件' +
+        (flat ? '（系统没返回目录结构）' : '') + (skipped ? '，跳过 ' + skipped + ' 个' : ''));
+    } catch (err) {
+      console.error(err);
+      toast((err && err.message) || '读取文件夹失败');
+    } finally {
+      idle();
+    }
+  }
+
+  /* ------------------------------------------------------------
      弹窗
   ------------------------------------------------------------ */
   function openModal(title, bodyHtml, buttons) {
@@ -1658,8 +1908,29 @@
       toast('目录已全部折叠');
     });
 
-    $('#btnImport').addEventListener('click', function () { $('#fileInput').click(); });
+    $('#btnImport').addEventListener('click', function (e) {
+      e.stopPropagation();
+      $('#importMenu').hidden = !$('#importMenu').hidden;
+    });
+    $('#btnImportZip').addEventListener('click', function () {
+      $('#importMenu').hidden = true;
+      $('#fileInput').click();
+    });
+    $('#btnImportDir').addEventListener('click', function () {
+      $('#importMenu').hidden = true;
+      pickFolder();
+    });
+    document.addEventListener('click', function (e) {
+      if (!$('#importMenu').hidden && !e.target.closest('#importWrap')) $('#importMenu').hidden = true;
+    });
+
     $('#btnWelcomeImport').addEventListener('click', function () { $('#fileInput').click(); });
+    $('#btnWelcomeDir').addEventListener('click', function () { pickFolder(); });
+    $('#dirInput').addEventListener('change', function (e) {
+      var files = e.target.files;
+      if (files && files.length) importDirectory(files);
+      e.target.value = '';
+    });
     $('#btnDemo').addEventListener('click', loadDemo);
     $('#btnWelcomeDemo').addEventListener('click', loadDemo);
 
@@ -1681,6 +1952,20 @@
       if (e.key === 'Escape') closeFind();
     });
 
+    $('#tabCode').addEventListener('click', function () { setTab('code'); });
+    $('#tabPdf').addEventListener('click', function () { setTab('pdf'); });
+    $('#btnOpenPdf').addEventListener('click', function () { $('#pdfInput').click(); });
+    $('#pdfInput').addEventListener('change', function (e) {
+      var f = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (f) openPdfFile(f);
+    });
+    $('#pdfPrev').addEventListener('click', function () { pdfStep(-1); });
+    $('#pdfNext').addEventListener('click', function () { pdfStep(1); });
+    $('#pdfZoomIn').addEventListener('click', function () { pdfZoom(1); });
+    $('#pdfZoomOut').addEventListener('click', function () { pdfZoom(-1); });
+    $('#pdfFit').addEventListener('click', function () { pdfFit(); });
+
     $('#btnEdit').addEventListener('click', toggleEdit);
     $('#fileMeta').addEventListener('click', function (e) {
       var t = e.target.closest('[data-act="revert"]');
@@ -1698,11 +1983,13 @@
         } else {
           openFile(erow.dataset.path);
           if (isMobile()) setSidebar(false, false);
-          setNotesPanel(true);
-          setTimeout(function () {
-            var fn = $('#fileNote');
-            if (fn) fn.focus();
-          }, 120);
+          if (!/\.pdf$/i.test(erow.dataset.path)) {
+            setNotesPanel(true);
+            setTimeout(function () {
+              var fn = $('#fileNote');
+              if (fn) fn.focus();
+            }, 120);
+          }
         }
         return;
       }
@@ -1837,6 +2124,7 @@
         if (document.activeElement === $('#noteInput')) { e.preventDefault(); saveCurrentNote(); }
         else if (state.editing) { e.preventDefault(); toggleEdit(); }
       } else if (e.key === 'Escape') {
+        if (!$('#importMenu').hidden) { $('#importMenu').hidden = true; return; }
         if (!$('#modal').hidden) { closeModal(); return; }
         if (document.activeElement === $('#findInput')) { closeFind(); return; }
         closeSheets();
@@ -1856,6 +2144,7 @@
         }
         if (!m) document.body.classList.remove('scrim-on');
         updateScrim();
+        if (pdfState.doc && pdfState.fit) renderPdfPage();
       }, 150);
     });
 
@@ -1876,6 +2165,14 @@
   function init() {
     applyTheme();
     applyDisplaySettings();
+
+    if (typeof pdfjsLib !== 'undefined' && pdfjsLib.GlobalWorkerOptions) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
+    }
+    if (!dirPickerSupported() && !nativeDirAvailable()) {
+      $('#btnImportDir').hidden = true;
+      $('#btnWelcomeDir').hidden = true;
+    }
 
     var mobile = isMobile();
     var sb = mobile ? false : (store.settings.sidebar !== false);

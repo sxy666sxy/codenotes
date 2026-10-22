@@ -32,6 +32,7 @@
   --accent-soft: #e8efff;
   --shadow: 0 10px 30px rgba(20, 24, 33, .12);
   --ln: #b3b8c2;
+  --pdf-bg: #e9e9e6;
 
   --t-kw: #7c3aed;
   --t-str: #16794a;
@@ -67,6 +68,7 @@ html[data-theme="dark"] {
   --t-num: #f0a06b;
   --t-fn: #7fd1ff;
   --t-var: #dde5f2;
+  --pdf-bg: #15181e;
 }
 
 * { box-sizing: border-box; }
@@ -679,3 +681,91 @@ body.no-inline-notes .inline-note { display: none; }
 .switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 #dirNoteInput { height: 92px; }
+
+/* ---------------- 导入菜单 / 底部菜单栏 / PDF ---------------- */
+.menu-wrap { position: relative; }
+.menu {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 70;
+  width: 216px; padding: 6px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: var(--shadow);
+  animation: pop .14s ease;
+}
+.menu-item {
+  display: flex; align-items: flex-start; gap: 9px; width: 100%;
+  padding: 9px 10px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--text); text-align: left; cursor: pointer;
+  font: 12.5px/1.4 var(--font-ui);
+}
+.menu-item:hover { background: var(--hover); }
+.menu-item .ico { margin-top: 2px; color: var(--muted); }
+.menu-item b { display: block; font-weight: 600; font-size: 12.8px; }
+.menu-item em { display: block; font-style: normal; color: var(--muted); font-size: 11px; margin-top: 2px; }
+
+.dz-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+
+.tabbar {
+  flex: none; display: flex;
+  height: calc(54px + var(--inset-bottom));
+  padding-bottom: var(--inset-bottom);
+  background: var(--panel); border-top: 1px solid var(--line);
+  z-index: 20;
+}
+.tab {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  border: 0; background: none; color: var(--faint); cursor: pointer;
+  font: 500 10.5px/1 var(--font-ui);
+  transition: color .15s;
+}
+.tab .ico { width: 19px; height: 19px; }
+.tab:hover { color: var(--muted); }
+.tab.on { color: var(--accent); }
+.tab.on .ico { stroke-width: 2; }
+
+.pdf-view { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--pdf-bg); }
+.pdf-bar {
+  flex: none; display: flex; align-items: center; gap: 3px;
+  padding: 6px 10px; background: var(--panel); border-bottom: 1px solid var(--line);
+  overflow-x: auto; white-space: nowrap;
+}
+.pdf-name {
+  font-size: 11.5px; color: var(--muted);
+  max-width: 30vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 0 4px;
+}
+.pdf-page {
+  font-size: 11.5px; color: var(--muted); min-width: 58px; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.pdf-bar .grow { flex: 1; min-width: 4px; }
+.pdf-stage {
+  flex: 1; overflow: auto; display: flex; align-items: flex-start; justify-content: center;
+  padding: 14px; background: var(--pdf-bg);
+}
+.pdf-stage canvas {
+  background: #fff; border-radius: 2px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .28);
+  max-width: 100%;
+}
+.pdf-empty {
+  margin: auto; display: flex; flex-direction: column; align-items: center; gap: 7px;
+  color: var(--muted); text-align: center; padding: 40px 20px;
+}
+.pdf-empty .ico.big { color: var(--accent); opacity: .7; }
+.pe-title { margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
+.pe-hint { margin: 0; font-size: 11.5px; line-height: 1.8; color: var(--muted); }
+
+body.tab-pdf .welcome,
+body.tab-pdf .editor,
+body.tab-pdf .notes-panel { display: none !important; }
+
+@media (max-width: 880px) {
+  .pdf-bar { padding: 6px 8px; }
+  .pdf-name { max-width: 24vw; }
+  .pdf-stage { padding: 10px; }
+}
+
+@media (min-width: 881px) {
+  .tabbar { justify-content: center; gap: 10px; }
+  .tab { flex: 0 0 190px; }
+}

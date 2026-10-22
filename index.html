@@ -26,6 +26,12 @@
   <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9.5 12 15.5l6-6"/></symbol>
   <symbol id="i-note" viewBox="0 0 24 24"><path d="M5 4.5h14a1.5 1.5 0 0 1 1.5 1.5v9.5a1.5 1.5 0 0 1-1.5 1.5H11l-4.2 3.3V17H5a1.5 1.5 0 0 1-1.5-1.5V6A1.5 1.5 0 0 1 5 4.5z"/></symbol>
   <symbol id="i-doc" viewBox="0 0 24 24"><path d="M6 3.5h7.5L19 9v11.5H6z"/><path d="M13.5 3.5V9H19"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5A2 2 0 0 1 5.5 5.5h4l2 2h7a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-pdf" viewBox="0 0 24 24"><path d="M6.5 3.5h7L19 9v11.5H6.5z"/><path d="M13.5 3.5V9H19"/><path d="M9 13.5h7M9 17h5"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 5.5 8.5 12 15 18.5"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 5.5 15.5 12 9 18.5"/></symbol>
   <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h9M17.5 7H20M4 17h3.5M12 17h8"/><circle cx="15" cy="7" r="2.4"/><circle cx="9.5" cy="17" r="2.4"/></symbol>
 </svg>
 
@@ -41,9 +47,22 @@
       <span class="brand-sub">程序注释</span>
     </div>
     <div class="top-spacer"></div>
-    <button class="btn primary" id="btnImport">
-      <svg class="ico"><use href="#i-upload"/></svg><span>导入压缩包</span>
-    </button>
+    <div class="menu-wrap" id="importWrap">
+      <button class="btn primary" id="btnImport" aria-haspopup="menu">
+        <svg class="ico"><use href="#i-upload"/></svg><span>导入</span>
+        <svg class="ico xs"><use href="#i-down"/></svg>
+      </button>
+      <div class="menu" id="importMenu" hidden role="menu">
+        <button class="menu-item" id="btnImportZip" role="menuitem">
+          <svg class="ico sm"><use href="#i-doc"/></svg>
+          <span><b>压缩包</b><em>选择一个 .zip 文件</em></span>
+        </button>
+        <button class="menu-item" id="btnImportDir" role="menuitem">
+          <svg class="ico sm"><use href="#i-folder"/></svg>
+          <span><b>文件夹</b><em>直接读取整个目录</em></span>
+        </button>
+      </div>
+    </div>
     <button class="icon-btn" id="btnExport" title="导出注释" aria-label="导出注释">
       <svg class="ico"><use href="#i-export"/></svg>
     </button>
@@ -103,7 +122,10 @@
             <svg class="ico big"><use href="#i-upload"/></svg>
             <div class="dz-title">把 .zip 压缩包拖到这里</div>
             <div class="dz-or">或</div>
-            <button class="btn primary" id="btnWelcomeImport">选择压缩包</button>
+            <div class="dz-actions">
+              <button class="btn primary" id="btnWelcomeImport">选择压缩包</button>
+              <button class="btn" id="btnWelcomeDir">选择文件夹</button>
+            </div>
             <div class="dz-hint">支持嵌套子文件夹 · 自动识别 UTF-8 / GBK</div>
           </div>
 
@@ -152,6 +174,30 @@
         </div>
       </section>
 
+      <section class="pdf-view" id="pdfView" hidden>
+        <div class="pdf-bar">
+          <button class="chip" id="btnOpenPdf">
+            <svg class="ico sm"><use href="#i-pdf"/></svg><span>打开 PDF</span>
+          </button>
+          <span class="pdf-name" id="pdfName">未打开文件</span>
+          <span class="grow"></span>
+          <button class="icon-btn sm" id="pdfPrev" title="上一页"><svg class="ico sm"><use href="#i-left"/></svg></button>
+          <span class="pdf-page" id="pdfPage">– / –</span>
+          <button class="icon-btn sm" id="pdfNext" title="下一页"><svg class="ico sm"><use href="#i-right"/></svg></button>
+          <button class="icon-btn sm" id="pdfZoomOut" title="缩小"><svg class="ico sm"><use href="#i-minus"/></svg></button>
+          <button class="icon-btn sm" id="pdfZoomIn" title="放大"><svg class="ico sm"><use href="#i-plus"/></svg></button>
+          <button class="chip" id="pdfFit" title="适应窗口">适应</button>
+        </div>
+        <div class="pdf-stage" id="pdfStage">
+          <canvas id="pdfCanvas"></canvas>
+          <div class="pdf-empty" id="pdfEmpty">
+            <svg class="ico big"><use href="#i-pdf"/></svg>
+            <p class="pe-title">还没有打开 PDF</p>
+            <p class="pe-hint">点「打开 PDF」选择文件；<br>压缩包 / 文件夹里如果有 PDF，在左侧直接点开也行</p>
+          </div>
+        </div>
+      </section>
+
       <aside class="notes-panel" id="notesPanel">
         <div class="np-head">
           <div class="np-title">注释 <span class="badge" id="npCount">0</span></div>
@@ -187,6 +233,15 @@
     </main>
   </div>
 
+  <nav class="tabbar" id="tabbar">
+    <button class="tab on" id="tabCode" data-tab="code">
+      <svg class="ico"><use href="#i-doc"/></svg><span>代码注释</span>
+    </button>
+    <button class="tab" id="tabPdf" data-tab="pdf">
+      <svg class="ico"><use href="#i-pdf"/></svg><span>PDF 阅读</span>
+    </button>
+  </nav>
+
   <div class="scrim" id="scrim"></div>
 
   <div class="busy" id="busy" hidden>
@@ -208,8 +263,11 @@
   <div class="toast-wrap" id="toastWrap"></div>
 </div>
 
+<input type="file" id="dirInput" webkitdirectory directory multiple hidden>
+<input type="file" id="pdfInput" accept="application/pdf" hidden>
 <input type="file" id="fileInput" accept=".zip,.txt,.md,.js,.ts,.py,.json,.html,.css,.java,.c,.cpp,.go,.rs,.sh,application/zip" hidden>
 
+<script src="vendor/pdf.min.js"></script>
 <script src="zip.js"></script>
 <script src="highlight.js"></script>
 <script src="app.js"></script>

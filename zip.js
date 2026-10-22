@@ -7,7 +7,7 @@
   var SIG_EOCD = 0x06054b50;
   var SIG_CD = 0x02014b50;
   var SIG_LOCAL = 0x04034b50;
-  var MAX_FILE = 6 * 1024 * 1024;      // 单文件超过此大小不载入
+  var MAX_FILE = 20 * 1024 * 1024;     // 单文件超过此大小不载入
   var MAX_TOTAL = 160 * 1024 * 1024;   // 解压总量上限
 
   var SKIP_PATHS = [
