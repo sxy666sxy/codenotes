@@ -1,0 +1,20 @@
+{
+  "name": "CodeNotes · 程序注释",
+  "short_name": "CodeNotes",
+  "description": "导入压缩文件夹，按目录浏览代码并逐行注释。",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0d0f13",
+  "theme_color": "#0f1115",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

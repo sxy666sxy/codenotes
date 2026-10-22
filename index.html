@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<meta name="description" content="导入压缩文件夹，逐行阅读并注释代码。">
+<title>CodeNotes · 程序注释</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body class="sb-open">
+
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M3.5 6.5h17M3.5 12h17M3.5 17.5h17"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5"/><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"/></symbol>
+  <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 4v12m0 0-4.5-4.5M12 16l4.5-4.5"/><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"/></symbol>
+  <symbol id="i-theme" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/><path d="M12 4.5v15a7.5 7.5 0 0 0 0-15z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 5.5 15.5 12 9 18.5"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m15.5 15.5 4.2 4.2"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2.2"/><path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 6.5h15M9 6.5V4.8A1.3 1.3 0 0 1 10.3 3.5h3.4A1.3 1.3 0 0 1 15 4.8v1.7"/><path d="M6.5 6.5 7.4 19a1.5 1.5 0 0 0 1.5 1.4h6.2a1.5 1.5 0 0 0 1.5-1.4l.9-12.5"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M6 14.5 12 8.5l6 6"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9.5 12 15.5l6-6"/></symbol>
+  <symbol id="i-note" viewBox="0 0 24 24"><path d="M5 4.5h14a1.5 1.5 0 0 1 1.5 1.5v9.5a1.5 1.5 0 0 1-1.5 1.5H11l-4.2 3.3V17H5a1.5 1.5 0 0 1-1.5-1.5V6A1.5 1.5 0 0 1 5 4.5z"/></symbol>
+  <symbol id="i-doc" viewBox="0 0 24 24"><path d="M6 3.5h7.5L19 9v11.5H6z"/><path d="M13.5 3.5V9H19"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h9M17.5 7H20M4 17h3.5M12 17h8"/><circle cx="15" cy="7" r="2.4"/><circle cx="9.5" cy="17" r="2.4"/></symbol>
+</svg>
+
+<div class="app">
+
+  <header class="topbar">
+    <button class="icon-btn" id="btnSidebar" title="显示 / 隐藏目录 (Ctrl+B)" aria-label="切换目录">
+      <svg class="ico"><use href="#i-menu"/></svg>
+    </button>
+    <div class="brand">
+      <span class="brand-mark">&lt;/&gt;</span>
+      <span class="brand-name">CodeNotes</span>
+      <span class="brand-sub">程序注释</span>
+    </div>
+    <div class="top-spacer"></div>
+    <button class="btn primary" id="btnImport">
+      <svg class="ico"><use href="#i-upload"/></svg><span>导入压缩包</span>
+    </button>
+    <button class="icon-btn" id="btnExport" title="导出注释" aria-label="导出注释">
+      <svg class="ico"><use href="#i-export"/></svg>
+    </button>
+    <button class="icon-btn" id="btnSettings" title="显示设置" aria-label="显示设置">
+      <svg class="ico"><use href="#i-settings"/></svg>
+    </button>
+    <button class="icon-btn" id="btnTheme" title="切换主题" aria-label="切换主题">
+      <svg class="ico"><use href="#i-theme"/></svg>
+    </button>
+  </header>
+
+  <div class="layout">
+
+    <aside class="sidebar" id="sidebar">
+      <div class="side-head">
+        <span class="side-title">目录</span>
+        <button class="icon-btn sm" id="btnSidebarClose" aria-label="收起目录">
+          <svg class="ico sm"><use href="#i-x"/></svg>
+        </button>
+      </div>
+      <div class="proj-card">
+        <div class="proj-name" id="projName">未导入项目</div>
+        <div class="proj-meta" id="projMeta">导入 .zip 压缩文件夹开始</div>
+        <div class="proj-stats" id="projStats"></div>
+      </div>
+
+      <div class="tree-tools">
+        <div class="filter-box">
+          <svg class="ico sm"><use href="#i-search"/></svg>
+          <input id="treeFilter" placeholder="筛选文件…" autocomplete="off" spellcheck="false">
+          <button class="mini-x" id="btnClearFilter" hidden aria-label="清除筛选">
+            <svg class="ico sm"><use href="#i-x"/></svg>
+          </button>
+        </div>
+        <button class="icon-btn sm" id="btnCollapse" title="全部折叠" aria-label="全部折叠">
+          <svg class="ico sm"><use href="#i-up"/></svg>
+        </button>
+      </div>
+
+      <nav class="tree" id="tree"></nav>
+
+      <div class="side-foot">
+        <span id="noteStat">0 条注释</span>
+        <button class="link-btn" id="btnDemo">载入示例</button>
+      </div>
+    </aside>
+
+    <main class="main" id="main">
+
+      <div class="welcome" id="welcome">
+        <div class="welcome-inner">
+          <div class="welcome-mark">&lt;/&gt;</div>
+          <h1>CodeNotes</h1>
+          <p class="welcome-sub">导入一个压缩文件夹，左侧按目录浏览，正文逐行阅读并注释</p>
+
+          <div class="dropzone" id="dropzone">
+            <svg class="ico big"><use href="#i-upload"/></svg>
+            <div class="dz-title">把 .zip 压缩包拖到这里</div>
+            <div class="dz-or">或</div>
+            <button class="btn primary" id="btnWelcomeImport">选择压缩包</button>
+            <div class="dz-hint">支持嵌套子文件夹 · 自动识别 UTF-8 / GBK</div>
+          </div>
+
+          <ul class="feats">
+            <li><b>目录</b>按真实子文件夹展开，名称自动换行，点击即切换文件</li>
+            <li><b>注释</b>点任意一行写下说明，注释与源码分离保存</li>
+            <li><b>随身</b>可添加到主屏幕离线使用，数据只存在本机</li>
+          </ul>
+
+          <button class="link-btn" id="btnWelcomeDemo">没有现成的压缩包？先看看示例项目 →</button>
+        </div>
+      </div>
+
+      <section class="editor" id="editor" hidden>
+        <div class="ed-head">
+          <div class="ed-title">
+            <div class="crumbs" id="crumbs"></div>
+            <div class="meta" id="fileMeta"></div>
+          </div>
+          <div class="ed-actions">
+            <button class="chip" id="btnFind">查找</button>
+            <button class="chip" id="btnEdit">编辑</button>
+            <button class="chip" id="btnNotes">
+              <svg class="ico sm"><use href="#i-note"/></svg><span>注释</span><span class="chip-badge" id="fileNoteCount" hidden>0</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="findbar" id="findbar" hidden>
+          <input id="findInput" placeholder="在当前文件中查找…" autocomplete="off" spellcheck="false">
+          <span class="find-count" id="findCount"></span>
+          <button class="icon-btn sm" id="findPrev" title="上一个"><svg class="ico sm"><use href="#i-up"/></svg></button>
+          <button class="icon-btn sm" id="findNext" title="下一个"><svg class="ico sm"><use href="#i-down"/></svg></button>
+          <button class="icon-btn sm" id="findClose" title="关闭"><svg class="ico sm"><use href="#i-x"/></svg></button>
+        </div>
+
+        <div class="ed-body">
+          <div class="viewer" id="viewer"><div class="lines" id="lines"></div></div>
+          <textarea class="editor-area" id="editorArea" spellcheck="false" autocomplete="off" autocapitalize="off" wrap="off" hidden></textarea>
+        </div>
+
+        <div class="ed-foot">
+          <span id="edFootLeft"></span>
+          <span class="grow"></span>
+          <span id="edFootRight"></span>
+        </div>
+      </section>
+
+      <aside class="notes-panel" id="notesPanel">
+        <div class="np-head">
+          <div class="np-title">注释 <span class="badge" id="npCount">0</span></div>
+          <button class="icon-btn sm" id="notesClose" title="收起注释面板" aria-label="收起注释面板">
+            <svg class="ico sm"><use href="#i-x"/></svg>
+          </button>
+        </div>
+        <div class="np-body">
+          <div class="np-section">
+            <label class="np-label" for="fileNote">文件注释</label>
+            <textarea id="fileNote" class="np-file-note" rows="2" placeholder="这个文件整体是做什么的…"></textarea>
+          </div>
+
+          <div class="np-section composer">
+            <div class="np-label-row">
+              <label class="np-label" id="noteHeader">点击左侧代码行开始注释</label>
+              <button class="link-btn danger" id="btnDeleteNote" hidden>删除</button>
+            </div>
+            <textarea id="noteInput" rows="3" placeholder="写下这一行 / 这一段的作用…"></textarea>
+            <div class="composer-foot">
+              <span class="hint">Ctrl + Enter 保存</span>
+              <button class="btn primary sm" id="btnSaveNote">保存</button>
+            </div>
+          </div>
+
+          <div class="np-section grow">
+            <label class="np-label">本文件注释 <span id="listCount" class="muted"></span></label>
+            <div class="note-list" id="noteList"></div>
+          </div>
+        </div>
+      </aside>
+
+    </main>
+  </div>
+
+  <div class="scrim" id="scrim"></div>
+
+  <div class="busy" id="busy" hidden>
+    <div class="spinner"></div>
+    <div id="busyText">处理中…</div>
+  </div>
+
+  <div class="modal" id="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="modalTitle">导出</h3>
+        <button class="icon-btn sm" id="modalClose"><svg class="ico sm"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-foot" id="modalFoot"></div>
+    </div>
+  </div>
+
+  <div class="toast-wrap" id="toastWrap"></div>
+</div>
+
+<input type="file" id="fileInput" accept=".zip,.txt,.md,.js,.ts,.py,.json,.html,.css,.java,.c,.cpp,.go,.rs,.sh,application/zip" hidden>
+
+<script src="zip.js"></script>
+<script src="highlight.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+node_modules/
+mobile/node_modules/
+mobile/www/
+mobile/android/.gradle/
+mobile/android/build/
+mobile/android/app/build/
+mobile/android/local.properties
+.DS_Store
+*.log

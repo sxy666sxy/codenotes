@@ -1,0 +1,22 @@
+{
+  "name": "codenotes-mobile",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "sync-web": "node scripts/copy-web.mjs",
+    "cap:sync": "npm run sync-web && cap sync android",
+    "cap:add": "npm run sync-web && cap add android"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "private": "true",
+  "dependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/cli": "^8.5.3",
+    "@capacitor/core": "^8.5.3"
+  }
+}

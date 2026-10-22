@@ -1,0 +1,129 @@
+# CodeNotes · 程序注释
+
+一个「导入压缩文件夹 → 按目录浏览 → 逐行注释」的本地应用。
+零依赖、纯静态，可从浏览器「添加到主屏幕」当 App 用，数据只存在本机。
+
+## 启动
+
+```bash
+cd codenotes
+python3 -m http.server 8099 --bind 127.0.0.1
+# 或
+./serve.sh 8099
+```
+
+然后在手机浏览器打开 <http://127.0.0.1:8099>。
+
+首次打开后可用浏览器菜单「添加到主屏幕」，之后离线也能用（Service Worker）。
+
+## 功能
+
+| 功能 | 说明 |
+| --- | --- |
+| 导入压缩包 | 点「导入压缩包」选择 .zip；桌面端也支持拖拽。单个文本文件也可直接导入 |
+| 目录树 | 按压缩包内真实子文件夹展开，文件夹可折叠，名称自动换行，长名字不会被截断 |
+| 隐藏目录 | 左上角 ☰ 收起/展开；手机上是抽屉式，点遮罩或 ✕ 关闭（快捷键 Ctrl/⌘+B） |
+| 文件筛选 | 目录上方输入框按路径过滤，自动展开命中项 |
+| 代码阅读 | 行号 + 语法高亮 + 自动换行；大文件分块渲染（每次 400 行，滚到底自动续载） |
+| 逐行注释 | 点任意一行选中，在右侧「注释」写下说明；行号变琥珀色、左侧出现橙点 |
+| 文件注释 | 每个文件一段整体说明，同样会显示在左侧文件名后 |
+| 目录注释 | 文件夹名称后显示「（注释）」；点目录行尾的铅笔编辑，只存在本机，不写进源码 |
+| 行尾注释 | 每行注释可按「3 个空格 + # 注释」的格式显示在代码行后面，可开关 |
+| 显示设置 | 顶栏滑杆图标：两个开关分别控制「行尾注释」与「目录注释」是否显示 |
+| 查找 | 当前文件内查找（Ctrl/⌘+F），上/下一个跳转 |
+| 编辑 | 「编辑」进入纯文本编辑；修改只存在本机，可随时「还原」回压缩包原始内容 |
+| 导出 | 右上角下载按钮，导出 Markdown 注释笔记（带代码片段），可复制或下载 .md |
+| 主题 | 跟随系统 / 浅色 / 深色 |
+
+## 两种注释显示
+
+1. **目录旁**：`文件夹名（注释）`、`文件名（注释）`，注释太长会截断成 `…`。
+   文件夹的注释点行尾铅笔单独设置；文件的注释就是「文件注释」。
+   想收起这些括号内容，用顶栏设置关掉「目录名称后显示注释」。
+2. **代码行尾**：`代码     # 注释`（`#` 前固定 3 个空格），颜色是琥珀色斜体。
+   开关在顶栏「显示设置 → 行尾显示行注释」，关闭后注释仍保留，只是不显示。
+
+两种显示都不改动源码，也不会写进 zip；导出 Markdown 时依然是完整的注释内容。
+
+## 数据存放
+
+- **注释**：`localStorage`（键 `codenotes.v1`），按「项目名 + 文件数 + 内容指纹」分桶。
+  重新导入同一个 zip，注释会自动回来。
+- **最近一次导入的 zip**：`IndexedDB`（`codenotes-db`），下次打开自动恢复上次项目。
+- 源码本身**不会被修改**：注释与源码分离保存；编辑模式的结果也只写在本机存储里。
+- 换浏览器 / 清理站点数据会丢失注释，重要内容请用「导出」备份成 .md。
+
+## 打包成安卓 App
+
+三种方式，按「省事程度」排：
+
+### 方式一：PWA（零构建，现在就能用）
+
+手机浏览器打开 <http://127.0.0.1:8099> → 菜单「添加到主屏幕」。
+Service Worker 会把全部资源缓存到本地，**之后即使本地服务没开，也能从桌面图标直接打开**（已实测）。
+
+### 方式二：云端打 APK（推荐，不用装 Android Studio）
+
+仓库里已经备好 Capacitor 工程和 GitHub Actions 工作流：
+
+- `mobile/`　Capacitor 安卓壳（包名 `com.codenotes.app`，App 名 `CodeNotes`）
+- `.github/workflows/build-apk.yml`　自动构建脚本
+
+步骤：
+
+1. 把整个 `codenotes/` 目录推到 GitHub（默认分支 `main`）。
+2. 打开仓库的 **Actions → Build Android APK → Run workflow**。
+3. 约 3~6 分钟后，在该次运行页面底部下载 `codenotes-debug-apk`，解压得到 `app-debug.apk`。
+4. 传到手机安装（允许「安装未知来源应用」）。
+
+工作流会自动装 Node 22 / JDK 21 / Android SDK 36，执行
+`npm ci` → 复制网页 → `cap sync` → `gradlew assembleDebug`，
+每次改完网页代码重新跑一遍即可。
+
+### 方式三：本地打包
+
+需要 JDK 21 + Android SDK Platform 36 + Build-Tools 36（装 Android Studio 最省事）。
+
+```bash
+cd mobile
+npm install
+npm run sync-web
+npx cap sync android
+cd android && ./gradlew assembleDebug
+# 产物：android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+也可以直接用 Android Studio 打开 `mobile/android` 点运行。
+
+> debug 包已用调试证书签名，可以自己装、自己用；要长期分发再做正式签名（见 `mobile/README.md`）。
+
+## 限制
+
+- 只支持 `.zip`（不支持 zip64 / 加密 / rar / 7z）。
+- 单文件超过 6MB 或二进制文件只显示提示，不预览，但仍可写文件注释。
+- 单个文本预览上限 2,000,000 字符；压缩包上限 90MB。
+- 中文文件名自动识别 UTF-8 / GBK 编码。
+
+## 文件
+
+```
+index.html            结构
+styles.css            样式（浅色 / 深色主题、响应式）
+app.js                主逻辑（目录树、编辑器、注释、导出、持久化）
+zip.js                零依赖 ZIP 解析（DecompressionStream）
+highlight.js          轻量语法高亮（C 系 / Python 系 / JSON / HTML / CSS / Markdown）
+manifest.webmanifest  PWA 清单
+sw.js                 离线缓存
+icon.svg              图标
+demo-project.zip      示例压缩包（也可以点「载入示例」直接用内置示例）
+mobile/               Capacitor 安卓壳 + 打包说明
+.github/workflows/    GitHub Actions（云端打 APK）
+```
+
+## 快捷键
+
+- `Ctrl/⌘ + B` 收起 / 展开目录
+- `Ctrl/⌘ + F` 文件内查找
+- `Ctrl/⌘ + S` 保存当前行注释（焦点在注释框时）/ 退出编辑
+- 注释框里 `Ctrl + Enter` 保存
+- `Esc` 关闭查找 / 弹窗 / 抽屉

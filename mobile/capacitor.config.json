@@ -1,0 +1,12 @@
+{
+  "appId": "com.codenotes.app",
+  "appName": "CodeNotes",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#0d0f13"
+  }
+}
