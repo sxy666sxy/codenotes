@@ -25,14 +25,17 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
+      - name: Ensure Android SDK 36
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0" > /dev/null || true
-          sdkmanager --list_installed | head -20
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "SDK: $SDK"
+          SDKM=$(ls -d "$SDK"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -1)
+          echo "sdkmanager: $SDKM"
+          if [ -n "$SDKM" ]; then
+            yes | "$SDKM" --licenses >/dev/null 2>&1 || true
+            "$SDKM" "platforms;android-36" "build-tools;36.0.0" || true
+            "$SDKM" --list_installed | grep -E "platforms;android-36|build-tools;36" || true
+          fi
 
       - name: Install deps & sync web assets
         working-directory: mobile
