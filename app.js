@@ -1619,20 +1619,20 @@
     var token = ++outlineSeq;
     body.innerHTML = '';
 
-    // 压缩包里的其它 PDF
-    if (pdfState.zipPdfs && pdfState.zipPdfs.length > 1) {
+    // 压缩包里的 PDF（始终显示，方便快速切换）
+    if (pdfState.zipPdfs && pdfState.zipPdfs.length) {
       var list = document.createElement('div');
       pdfState.zipPdfs.forEach(function (item) {
         var btn = document.createElement('button');
         btn.className = 'po-item' + (item.name === pdfState.name ? ' on' : '');
-        btn.textContent = item.name;
-        btn.title = item.name;
+        btn.textContent = item.path || item.name;
+        btn.title = item.path || item.name;
         btn.addEventListener('click', function () {
           openPdfData(new Uint8Array(item.data), item.name);
         });
         list.appendChild(btn);
       });
-      body.appendChild(poSection('压缩包内的 PDF', list));
+      body.appendChild(poSection('压缩包内的 PDF（' + pdfState.zipPdfs.length + ' 个）', list));
     }
 
     var outline = null;
@@ -1652,7 +1652,7 @@
           if (it.items && it.items.length) add(it.items, depth + 1);
         });
       })(outline, 0);
-      body.appendChild(poSection('书签', list2));
+      body.appendChild(poSection('当前 PDF 书签', list2));
     }
 
     var pages = document.createElement('div');
@@ -1669,7 +1669,7 @@
         pages.appendChild(b);
       })(i);
     }
-    body.appendChild(poSection('页面（点数字跳转）', pages));
+    body.appendChild(poSection('当前 PDF 页面', pages));
   }
 
   async function jumpToDest(dest) {
@@ -1746,25 +1746,33 @@
 
       // 逐块覆盖，保持原版式
       if (t.blocks && t.blocks.length) {
+        // 整页白底，避免原文从译文缝隙里露出来
+        var base = document.createElement('div');
+        base.className = 'pdf-trans-base';
+        p.wrap.appendChild(base);
+
         t.blocks.forEach(function (b) {
           if (!b.trans) return;
           var el = document.createElement('div');
           el.className = 'pdf-tr-block';
+          var lineH = Math.max(3, (b.h * s) / Math.max(1, b.lineCount || 1));
           el.style.left = (b.x * s) + 'px';
           el.style.top = (b.y * s) + 'px';
           el.style.width = Math.max(16, b.w * s + 2) + 'px';
-          el.style.height = Math.max(7, b.h * s + 1) + 'px';
-          var fs = Math.max(3.2, (b.h * s / Math.max(1, b.lineCount || 1)) * 0.74);
-          el.style.fontSize = fs + 'px';
+          el.style.height = Math.max(6, b.h * s + 1) + 'px';
+          // 行距锁死为原文行高，字号在行内回缩，保证落在原来的行格子里
+          el.style.lineHeight = lineH + 'px';
+          el.style.fontSize = Math.max(3, lineH * 0.78) + 'px';
           el.textContent = b.trans;
           p.wrap.appendChild(el);
         });
-        // 放不下就缩小字号
+
+        // 放不下就缩字号（行高不变，行数不变）
         var blocks = p.wrap.querySelectorAll('.pdf-tr-block');
         Array.prototype.forEach.call(blocks, function (el) {
           var fs = parseFloat(el.style.fontSize) || 9;
-          for (var k = 0; k < 7 && el.scrollHeight > el.clientHeight + 1 && fs > 3; k++) {
-            fs *= 0.86;
+          for (var k = 0; k < 10 && el.scrollHeight > el.clientHeight + 1 && fs > 2.4; k++) {
+            fs *= 0.88;
             el.style.fontSize = fs + 'px';
           }
         });
@@ -1937,7 +1945,7 @@
     lines.forEach(function (ln) {
       var b = blocks[blocks.length - 1];
       var gap = b ? ln.y - (b.y + b.h) : 1e9;
-      if (b && gap < ln.h * 1.2 && Math.abs(ln.x - b.x) < ln.h * 2.5) {
+      if (b && gap < ln.h * 1.7 && Math.abs(ln.x - b.x) < ln.h * 3) {
         b.lines.push(ln);
         b.x = Math.min(b.x, ln.x);
         b.y = Math.min(b.y, ln.y);

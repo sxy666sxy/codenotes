@@ -848,13 +848,16 @@ body.tab-pdf .notes-panel { display: none !important; }
 
 
 /* PDF 逐块译文覆盖 */
+.pdf-trans-base {
+  position: absolute; inset: 0; z-index: 2; background: #fff;
+}
 .pdf-tr-block {
   position: absolute; z-index: 3;
-  background: #fff; color: #111;
+  background: transparent; color: #16181d;
   overflow: hidden;
-  line-height: 1.2;
-  white-space: pre-wrap; overflow-wrap: anywhere;
-  padding: 0 1px;
+  white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+  text-align: left; text-indent: 0;
+  box-sizing: border-box; padding: 0;
 }
 
 /* PDF 目录（右侧） */
