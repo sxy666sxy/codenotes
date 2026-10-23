@@ -68,7 +68,7 @@
 
   var esc = function (s) { return HL.escape(String(s == null ? '' : s)); };
 
-  var APP_VERSION = '1.4.2';
+  var APP_VERSION = '1.4.3';
   var AI_PRESETS = [
     { id: 'deepseek', name: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
     { id: 'openai', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
@@ -2830,7 +2830,10 @@
     var sel = $('#trProvider');
     var fields = $('#trLlmFields');
     var syncFields = function () {
-      if (fields) fields.style.display = sel && sel.value === 'llm' ? '' : 'none';
+      if (!fields) return;
+      // 只有「免费 Google」不需要 Key/地址/模型，其它服务商都要显示
+      var isGoogle = sel && sel.value === 'google';
+      fields.style.display = isGoogle ? 'none' : '';
     };
     syncFields();
     if (sel) {
