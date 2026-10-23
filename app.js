@@ -9,8 +9,8 @@
   var esc = function (s) { return HL.escape(String(s == null ? '' : s)); };
 
   var LS_KEY = 'codenotes.v1';
-  var MAX_PREVIEW = 2 * 1024 * 1024;   // 单个文本文件预览上限（字符）
-  var MAX_LINE_CHARS = 2000;           // 单行显示上限（压缩代码常常几百万字符一行）
+  var MAX_PREVIEW = 8 * 1024 * 1024;   // 单个文本文件预览上限（字符）
+  var MAX_LINE_CHARS = 4000;           // 单行显示上限（压缩代码常常几百万字符一行）
 
   /* ------------------------------------------------------------
      状态
@@ -672,12 +672,9 @@
       text = rec.content;
       enc = '本地修改';
       state.modified = true;
-    } else if (entry.size > 6 * 1024 * 1024) {
+    } else if (entry.size > 24 * 1024 * 1024) {
       state.binary = true;
-      state.notice = '文件超过 6MB，暂不载入预览。你仍然可以为它写整体注释。';
-    } else if (ZipReader.looksUnreadable(entry.data)) {
-      state.binary = true;
-      state.notice = '这个文件是加密内容 / 二进制 / 乱码，已跳过加载。你仍然可以为它写整体注释。';
+      state.notice = '文件超过 24MB，暂不载入预览。你仍然可以为它写整体注释。';
     } else {
       var cached = state.project.textCache.get(path);
       if (cached) {
@@ -1389,6 +1386,10 @@
       var task = pdfjsLib.getDocument({ data: data, isEvalSupported: false });
       var doc = await task.promise;
       pdfState.doc = doc;
+      pdfState.trans = {};
+      pdfState.showTrans = false;
+      $('#pdfTransToggle').hidden = true;
+      $('#pdfTransToggle').classList.remove('on');
       var first = await doc.getPage(1);
       var vp1 = first.getViewport({ scale: 1 });
       pdfState.baseW = vp1.width;
@@ -1490,12 +1491,25 @@
   }
 
   function applyScale() {
+    var stage = $('#pdfStage');
+    // 记录缩放前当前页相对视口的位置，缩放后按差值补回 scrollTop，避免跳页
+    var anchor = pdfState.pages[Math.max(0, (pdfState.current || 1) - 1)] || pdfState.pages[0];
+    var offsetBefore = anchor ? anchor.wrap.getBoundingClientRect().top - stage.getBoundingClientRect().top : 0;
+
     pdfState.pages.forEach(function (p) {
       p.wrap.style.width = Math.round(p.w * pdfState.scale) + 'px';
       p.wrap.style.height = Math.round(p.h * pdfState.scale) + 'px';
       p.renderedScale = 0;
     });
+
+    if (anchor) {
+      var offsetAfter = anchor.wrap.getBoundingClientRect().top - stage.getBoundingClientRect().top;
+      stage.scrollTop += (offsetAfter - offsetBefore);
+    }
+
     refreshVisiblePages();
+    renderTransOverlays();
+    onPdfScroll();
   }
 
   function refreshVisiblePages() {
@@ -1534,6 +1548,72 @@
     pdfState.fit = true;
     pdfState.scale = fitScale();
     applyScale();
+  }
+
+  /* ---------------- PDF 译文覆盖 ---------------- */
+  function renderTransOverlays() {
+    if (!pdfState.pages) return;
+    pdfState.pages.forEach(function (p) {
+      var old = p.wrap.querySelector('.pdf-trans-overlay');
+      if (old) old.remove();
+      if (!pdfState.showTrans) return;
+
+      var div = document.createElement('div');
+      div.className = 'pdf-trans-overlay';
+      var w = p.wrap.clientWidth || 400;
+      div.style.fontSize = Math.max(9, Math.round(w / 46)) + 'px';
+
+      var text = pdfState.trans[p.no];
+      if (text) {
+        div.textContent = text;
+      } else {
+        var hint = document.createElement('div');
+        hint.className = 't-empty';
+        hint.textContent = '（第 ' + p.no + ' 页还没有翻译，滚到这一页后点「译」）';
+        div.appendChild(hint);
+      }
+      p.wrap.appendChild(div);
+    });
+  }
+
+  function togglePdfTranslation(force) {
+    pdfState.showTrans = typeof force === 'boolean' ? force : !pdfState.showTrans;
+    var btn = $('#pdfTransToggle');
+    var has = Object.keys(pdfState.trans).length > 0;
+    btn.hidden = !has;
+    btn.textContent = pdfState.showTrans ? '原文' : '译文';
+    btn.classList.toggle('on', pdfState.showTrans);
+    renderTransOverlays();
+  }
+
+  function showTransResult(no, text) {
+    var body = $('#ptBody');
+    body.innerHTML = '';
+
+    var pre = document.createElement('div');
+    pre.className = 'pt-text';
+    pre.textContent = text;
+    body.appendChild(pre);
+
+    var actions = document.createElement('div');
+    actions.className = 'pt-actions';
+
+    var toggle = document.createElement('button');
+    toggle.className = 'btn sm';
+    toggle.textContent = pdfState.showTrans ? '在 PDF 上显示原文' : '在 PDF 上显示译文';
+    toggle.addEventListener('click', function () {
+      togglePdfTranslation();
+      toggle.textContent = pdfState.showTrans ? '在 PDF 上显示原文' : '在 PDF 上显示译文';
+    });
+    actions.appendChild(toggle);
+
+    var close = document.createElement('button');
+    close.className = 'btn sm primary';
+    close.textContent = '关闭';
+    close.addEventListener('click', function () { $('#pdfTrans').hidden = true; });
+    actions.appendChild(close);
+
+    body.appendChild(actions);
   }
 
   /* ---------------- PDF 手势：双指缩放 ---------------- */
@@ -1730,7 +1810,9 @@
 
     var key = transKeyOf(no);
     if (transCache[key]) {
-      body.textContent = transCache[key];
+      pdfState.trans[no] = transCache[key];
+      togglePdfTranslation(true);
+      showTransResult(no, transCache[key]);
       return;
     }
 
@@ -1747,7 +1829,9 @@
       var out = await translateLong(text);
       transCache[key] = out;
       saveTransCache();
-      body.textContent = out;
+      pdfState.trans[no] = out;
+      togglePdfTranslation(true);
+      showTransResult(no, out);
     } catch (err) {
       console.error(err);
       body.innerHTML = '';
@@ -1815,7 +1899,6 @@
         if (isSkippedPath(f.p)) { skipped++; continue; }
         var bytes = base64ToBytes(f.d);
         if (!bytes.length) { skipped++; continue; }
-        if (!/\.pdf$/i.test(f.p) && ZipReader.looksUnreadable(bytes)) { skipped++; continue; }
         entries.push({ path: f.p, size: bytes.length, data: bytes });
         if (i % 20 === 0) busy('正在解析… ' + (i + 1) + ' / ' + list.length);
       }
@@ -1850,7 +1933,6 @@
         if (total + f.size > 80 * 1024 * 1024) { skipped++; continue; }
 
         var data = new Uint8Array(await f.arrayBuffer());
-        if (!/\.pdf$/i.test(path) && ZipReader.looksUnreadable(data)) { skipped++; continue; }
         total += data.length;
         entries.push({ path: path, size: data.length, data: data });
         if (i % 6 === 0) busy('正在读取… ' + (i + 1) + ' / ' + files.length);
@@ -2348,6 +2430,7 @@
     $('#pdfZoomOut').addEventListener('click', function () { pdfZoom(-1); });
     $('#pdfFit').addEventListener('click', function () { pdfFit(); });
     $('#btnTranslate').addEventListener('click', translateCurrentPage);
+    $('#pdfTransToggle').addEventListener('click', function () { togglePdfTranslation(); });
     $('#ptClose').addEventListener('click', function () { $('#pdfTrans').hidden = true; });
     $('#pdfStage').addEventListener('scroll', onPdfScroll, { passive: true });
     bindPdfGestures();

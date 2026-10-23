@@ -197,11 +197,7 @@
           skipped++; continue;                        // 不支持的压缩算法
         }
 
-        // 跳过加密 / 二进制 / 乱码文件（PDF 保留，用于阅读）
-        if (!/\.pdf$/i.test(m.path) && looksUnreadable(data)) {
-          skipped++;
-          continue;
-        }
+        // 记事本模式：所有文件都载入，乱码也原样显示
         total += data.length;
         entries.push({ path: m.path, size: data.length, data: data });
       } catch (err) {

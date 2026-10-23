@@ -831,3 +831,15 @@ body.tab-pdf .notes-panel { display: none !important; }
 .set-field input:focus, .set-field select:focus { border-color: var(--accent); }
 
 .spinner.sm { width: 15px; height: 15px; border-width: 2px; }
+
+/* PDF 译文覆盖层 */
+.pdf-trans-overlay {
+  position: absolute; inset: 0; z-index: 3;
+  background: #fff; color: #16181d;
+  padding: 7% 8%;
+  overflow-y: auto;
+  font-size: 14px; line-height: 1.75;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  -webkit-overflow-scrolling: touch;
+}
+.pdf-trans-overlay .t-empty { color: #8a8f99; font-size: 12px; }
