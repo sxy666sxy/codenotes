@@ -68,7 +68,7 @@
 
   var esc = function (s) { return HL.escape(String(s == null ? '' : s)); };
 
-  var APP_VERSION = '1.4.4';
+  var APP_VERSION = '1.4.5';
   var AI_PRESETS = [
     { id: 'deepseek', name: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
     { id: 'openai', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
@@ -2735,7 +2735,11 @@
       '<button class="btn sm" id="btnBackup">导出</button></div>',
       '<div class="set-row"><div class="set-text"><b>导入备份</b>' +
       '<span>从 .json 恢复，会覆盖当前全部数据</span></div>' +
-      '<button class="btn sm" id="btnRestore">导入</button></div>'
+      '<button class="btn sm" id="btnRestore">导入</button></div>',
+      '<div class="set-row"><div class="set-text"><b>备份里包含 AI Key</b>' +
+      '<span>默认不包含；打开后导出的 .json 会带上 API Key，注意保管</span></div>' +
+      '<button class="switch" role="switch" data-key="backupIncludeKey" aria-checked="' +
+      (store.settings.backupIncludeKey === true) + '"><i></i></button></div>'
     ].join('');
 
     var presetOptions = AI_PRESETS.map(function (p) {
@@ -2765,7 +2769,7 @@
     openModal('设置', [
       '<div class="set-shell">',
       '<div class="set-brand-row">',
-      '<img src="icon.svg" alt="">',
+      '<img src="icon.jpg" alt="">',
       '<div class="set-brand-text"><b>CodeNotes</b><span>v' + APP_VERSION + '</span></div>',
       '</div>',
       '<div class="set-main">',
@@ -2887,37 +2891,53 @@
   function guideHtml() {
     return [
       '<div class="guide">',
-      '<p><b>CodeNotes</b> 是本地代码 / 文档注释工具：左侧目录、右侧正文，数据只存在本机。</p>',
-      '<h4>一、导入代码</h4>',
+      '<p><b>CodeNotes</b>：本地代码 / 文档注释工具。左侧目录、右侧正文，所有数据只存在本机。</p>',
+
+      '<h4>一、导入</h4>',
       '<ul>',
-      '<li>顶栏 <b>上传图标</b> → 压缩包 / 文件夹</li>',
-      '<li>安卓的「文件夹」用系统目录选择器，保留完整的子目录结构</li>',
-      '<li>乱码、二进制文件也照原样显示（记事本模式），不跳过</li>',
+      '<li>顶栏 <b>上传图标</b>：导入压缩包（.zip）或直接选文件夹（安卓用系统目录选择器，保留完整目录结构）</li>',
+      '<li>顶栏 <b>PDF 图标</b>：选单个 PDF，或导入「内含 PDF 的压缩包」</li>',
+      '<li>记事本模式：任何文件都按原样显示，乱码也照实显示，不跳过</li>',
       '</ul>',
-      '<h4>二、注释</h4>',
+
+      '<h4>二、代码阅读与注释</h4>',
       '<ul>',
-      '<li>点任意一行 → 在右侧写注释 → 保存（或 Ctrl+Enter）</li>',
-      '<li>行尾会以「   # 注释」显示，可在「代码注释及高亮」里关掉或改颜色</li>',
-      '<li>文件夹行尾的铅笔可写目录注释，显示成「名称（注释）」</li>',
-      '<li>右上角 <b>导出</b> 可把注释导出成 Markdown</li>',
+      '<li>左侧目录：点击切换文件、点文件夹折叠/展开、顶部输入框筛选</li>',
+      '<li>文件夹行尾的 <b>铅笔</b>：写目录注释，显示成「名称（注释）」</li>',
+      '<li>代码区：行号 + 语法高亮；默认<b>不换行、可左右滑动</b>，双指捏合可缩放字号（4~24px），桌面 Ctrl+滚轮</li>',
+      '<li>点任意一行 → 右侧写注释 → 保存（Ctrl+Enter）；行尾显示「   # 注释」，颜色可在设置里改，注释行不再整行高亮</li>',
+      '<li>设置里可添加<b>多组自定义高亮词</b>（颜色 + 逗号分隔的词）</li>',
+      '<li>右上角「查找」在文件内搜索；「编辑」可改文本；「导出」导出 Markdown 笔记</li>',
       '</ul>',
+
       '<h4>三、PDF</h4>',
       '<ul>',
-      '<li>顶栏 <b>PDF 图标</b> → 选 PDF 文件或导入压缩包；项目里的 PDF 在左侧直接点开</li>',
-      '<li>连续滚动翻页，双指捏合缩放，放大后可以左右滑动，页码框输入数字可跳转</li>',
-      '<li><b>查找</b>：搜索 PDF 文字，用 ↑↓ 逐个跟踪命中位置</li>',
-      '<li><b>目录</b>：压缩包内其它 PDF、书签（可一键翻译书签标题）</li>',
-      '<li><b>译</b>：翻译当前页；完成后用「原文 / 译文」切换，A− / A+ 调字号，拖顶部手柄调面板高度</li>',
+      '<li>连续上下滚动翻页，双指捏合缩放，放大后可左右滑动；页码框输入数字可直接跳页</li>',
+      '<li><b>查找</b>：搜索 PDF 文字，命中高亮，↑↓ 逐处跟踪</li>',
+      '<li><b>目录</b>：压缩包内其它 PDF 一键切换、PDF 书签（可整体翻译书签标题）</li>',
+      '<li><b>译</b>：翻译当前页（按原文段落排版、保留图片）；完成后「原文 / 译文」切换，A− / A+ 调译文字号，拖顶部手柄调面板高度</li>',
+      '<li>扫描件/图片型 PDF 没有文字层，无法翻译</li>',
       '</ul>',
-      '<h4>四、AI</h4>',
+
+      '<h4>四、AI 配置</h4>',
       '<ul>',
-      '<li>在「PDF · AI 配置」里填 DeepSeek / OpenAI 兼容的 API Key（翻译质量优先），也可切免费 Google</li>',
-      '<li>「账户余额」点刷新即可查询当前 Key 的余额</li>',
+      '<li>服务商支持 DeepSeek、OpenAI、通义千问、智谱 GLM、Moonshot Kimi、硅基流动、自定义（OpenAI 兼容）与免费 Google</li>',
+      '<li>选服务商会自动填好接口地址和模型，只需填对应的 API Key</li>',
+      '<li>「AI 余额」点刷新可查 DeepSeek 账户余额</li>',
       '</ul>',
-      '<h4>五、数据</h4>',
+
+      '<h4>五、数据与备份</h4>',
       '<ul>',
-      '<li>注释保存在本机，卸载应用会清空，重要内容请先导出</li>',
-      '<li>会自动记住上次打开的项目、PDF 和页码</li>',
+      '<li>注释和设置保存在应用私有目录，系统文件管理器看不到；卸载应用会清空</li>',
+      '<li><b>导出备份</b>：全部注释 + 设置存成 .json，保存位置由你选（可另选任意文件夹）</li>',
+      '<li><b>导入备份</b>：从任意位置的 .json 恢复</li>',
+      '<li>备份默认<b>不包含 API Key</b>，需要的话在下方打开开关</li>',
+      '</ul>',
+
+      '<h4>六、启动记忆</h4>',
+      '<ul>',
+      '<li>启动默认回到<b>代码页</b>，并打开上次看的文件（含滚动位置）</li>',
+      '<li>上次的 PDF 会在你点「PDF 阅读」时直接续上，页码不变</li>',
       '</ul>',
       '</div>'
     ].join('');
@@ -2932,11 +2952,15 @@
   }
 
   function buildBackupJson() {
+    var settings = JSON.parse(JSON.stringify(store.settings || {}));
+    if (!store.settings.backupIncludeKey && settings.translate) {
+      delete settings.translate.apiKey;
+    }
     return JSON.stringify({
       app: 'CodeNotes',
       version: APP_VERSION,
       at: Date.now(),
-      settings: store.settings,
+      settings: settings,
       projects: store.projects,
       lastFile: store.lastFile || null
     }, null, 2);
@@ -3505,6 +3529,7 @@
 
     $('#tabCode').addEventListener('click', function () { setTab('code'); });
     $('#tabPdf').addEventListener('click', function () { setTab('pdf'); });
+    $('#btnEmptyOpen').addEventListener('click', function () { $('#pdfInput').click(); });
     $('#pdfInput').addEventListener('change', function (e) {
       var f = e.target.files && e.target.files[0];
       e.target.value = '';

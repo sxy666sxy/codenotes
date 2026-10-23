@@ -16,6 +16,7 @@ const FILES = [
   'manifest.webmanifest',
   'sw.js',
   'icon.svg',
+  'icon.jpg',
   'demo-project.zip',
   'vendor/pdf.min.js',
   'vendor/pdf.worker.min.js'
