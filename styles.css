@@ -804,7 +804,7 @@ body.tab-pdf .notes-panel { display: none !important; }
   .pdf-stage { padding: 10px; }
   .pdf-trans {
     position: fixed; left: 0; right: 0; bottom: 0; top: auto;
-    width: auto; max-height: 58dvh;
+    width: auto; max-height: 92dvh;
     border-left: 0; border-top: 1px solid var(--line);
     border-radius: 14px 14px 0 0; z-index: 66;
   }
@@ -914,3 +914,16 @@ body.tab-pdf .notes-panel { display: none !important; }
 .pdf-tr-cover { position: absolute; z-index: 2; background: #fff; }
 .pt-size { align-items: center; gap: 6px; margin-top: 10px; }
 .pt-scale-label { font-size: 12px; color: var(--muted); min-width: 44px; text-align: center; }
+
+/* 译文面板拖拽手柄（手机） */
+.pt-grip {
+  display: none;
+  flex: none; height: 20px; align-items: center; justify-content: center;
+  cursor: ns-resize; touch-action: none;
+}
+.pt-grip span { width: 40px; height: 4px; border-radius: 3px; background: var(--line); }
+.pdf-trans.dragging { transition: none; }
+@media (max-width: 880px) {
+  .pt-grip { display: flex; }
+  .pdf-trans { transition: height .12s ease; }
+}

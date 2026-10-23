@@ -1717,7 +1717,7 @@
   /* ---------------- PDF 译文覆盖 ---------------- */
   function clearTransOverlays() {
     pdfState.pages.forEach(function (p) {
-      var olds = p.wrap.querySelectorAll('.pdf-trans-overlay, .pdf-tr-block, .pdf-trans-base');
+      var olds = p.wrap.querySelectorAll('.pdf-trans-overlay, .pdf-tr-block, .pdf-trans-base, .pdf-tr-cover');
       Array.prototype.forEach.call(olds, function (el) { el.remove(); });
     });
   }
@@ -1822,6 +1822,49 @@
     btn.textContent = pdfState.showTrans ? '原文' : '译文';
     btn.classList.toggle('on', pdfState.showTrans);
     renderTransOverlays();
+  }
+
+  function applyTransPanelHeight() {
+    var panel = $('#pdfTrans');
+    if (!panel) return;
+    if (!isMobile()) { panel.style.height = ''; return; }
+    var h = Number(store.settings.transPanelH) || 0.58;
+    h = Math.max(0.25, Math.min(0.92, h));
+    panel.style.height = (h * 100) + 'dvh';
+  }
+
+  function bindTransPanelDrag() {
+    var grip = $('#ptGrip');
+    var panel = $('#pdfTrans');
+    if (!grip || !panel) return;
+    var drag = null;
+
+    grip.addEventListener('pointerdown', function (e) {
+      drag = { y: e.clientY, h: panel.getBoundingClientRect().height };
+      panel.classList.add('dragging');
+      try { grip.setPointerCapture(e.pointerId); } catch (err) { /* 忽略 */ }
+      e.preventDefault();
+    });
+
+    grip.addEventListener('pointermove', function (e) {
+      if (!drag) return;
+      var next = drag.h + (drag.y - e.clientY);
+      next = Math.max(140, Math.min(window.innerHeight * 0.92, next));
+      panel.style.height = next + 'px';
+    });
+
+    grip.addEventListener('pointerup', function () {
+      if (!drag) return;
+      drag = null;
+      panel.classList.remove('dragging');
+      var ratio = panel.getBoundingClientRect().height / window.innerHeight;
+      store.settings.transPanelH = Math.max(0.25, Math.min(0.92, ratio));
+      saveStore();
+    });
+    grip.addEventListener('pointercancel', function () {
+      drag = null;
+      panel.classList.remove('dragging');
+    });
   }
 
   function showTransResult(no, text) {
@@ -2141,6 +2184,7 @@
     if (!pdfState.doc) { toast('先打开一个 PDF'); return; }
     var no = pdfState.current || 1;
     $('#pdfTrans').hidden = false;
+    applyTransPanelHeight();
     $('#ptTitle').textContent = '翻译 · 第 ' + no + ' 页';
     var body = $('#ptBody');
 
@@ -2803,6 +2847,7 @@
     $('#btnTranslate').addEventListener('click', translateCurrentPage);
     $('#pdfTransToggle').addEventListener('click', function () { togglePdfTranslation(); });
     $('#ptClose').addEventListener('click', function () { $('#pdfTrans').hidden = true; });
+    bindTransPanelDrag();
     $('#pdfStage').addEventListener('scroll', onPdfScroll, { passive: true });
     bindPdfGestures();
 
