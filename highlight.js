@@ -335,6 +335,10 @@
   }
 
   function render(line, lang, st) {
+    if (line.length > 8000) {
+      // 单行过长（压缩后的 bundle 之类）不做高亮，避免生成几十 MB 的 HTML
+      return { html: esc(line), st: {} };
+    }
     if (lang === 'html') return scanHtml(line, st);
     if (lang === 'css') return scanCss(line, st);
     if (lang === 'md') return scanMd(line, st);

@@ -10,6 +10,7 @@
 
   var LS_KEY = 'codenotes.v1';
   var MAX_PREVIEW = 2 * 1024 * 1024;   // 单个文本文件预览上限（字符）
+  var MAX_LINE_CHARS = 2000;           // 单行显示上限（压缩代码常常几百万字符一行）
 
   /* ------------------------------------------------------------
      状态
@@ -275,6 +276,8 @@
       var proj = await ZipReader.readAny(file, function (i, total) {
         busy('正在解压… ' + i + ' / ' + total);
       });
+      busy('正在生成目录…');
+      await new Promise(function (r) { setTimeout(r, 40); });
       loadProject(proj);
       rememberProject(file);
       var ms = Math.round(performance.now() - t0);
@@ -785,7 +788,9 @@
 
     for (var i = from; i < to; i++) {
       var raw = state.lines[i];
-      var res = HL.render(raw, state.lang, state.hl);
+      var cut = raw.length > MAX_LINE_CHARS;
+      var shown = cut ? raw.slice(0, MAX_LINE_CHARS) : raw;
+      var res = HL.render(shown, state.lang, state.hl);
       state.hl = res.st;
       var n = i + 1;
       var noteVal = notes[n];
@@ -795,6 +800,7 @@
       if (noteVal) row.classList.add('has-note');
       if (state.findTerm && raw.toLowerCase().indexOf(state.findTerm) >= 0) row.classList.add('hit');
       var html = res.html || ' ';
+      if (cut) html += '<span class="cut-mark"> … 已截断（原行 ' + raw.length + ' 字符）</span>';
       if (noteVal) html += '<span class="inline-note">' + esc(formatInlineNote(noteVal)) + '</span>';
       row.innerHTML = '<span class="ln">' + n + '</span><span class="code">' + html + '</span>';
       frag.appendChild(row);
@@ -1468,9 +1474,14 @@
   }
 
   async function pickNativeDirectory() {
-    busy('正在读取文件夹…');
+    busy('正在读取文件夹…（文件多时会慢一点）');
     try {
-      var res = await window.Capacitor.Plugins.DirPicker.pick();
+      var res = await Promise.race([
+        window.Capacitor.Plugins.DirPicker.pick(),
+        new Promise(function (_, reject) {
+          setTimeout(function () { reject(new Error('选择文件夹超时，请重试或改用压缩包')); }, 120000);
+        })
+      ]);
       var entries = [];
       var skipped = 0;
       var list = res.files || [];
@@ -2162,7 +2173,25 @@
     toast('已载入示例项目 · 左侧点开 src/ 看看');
   }
 
+  function showFatal(msg) {
+    var el = document.getElementById('errBanner');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'errBanner';
+      el.className = 'err-banner';
+      el.addEventListener('click', function () { el.remove(); });
+      document.body.appendChild(el);
+    }
+    el.textContent = '出错了：' + String(msg).slice(0, 300) + '（点我关闭）';
+  }
+
   function init() {
+    window.addEventListener('error', function (e) { showFatal(e.message || '脚本错误'); });
+    window.addEventListener('unhandledrejection', function (e) {
+      var r = e.reason;
+      showFatal((r && (r.message || r)) || '未处理的错误');
+    });
+
     applyTheme();
     applyDisplaySettings();
 
