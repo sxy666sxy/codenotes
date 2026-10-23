@@ -3212,7 +3212,6 @@
 
     $('#tabCode').addEventListener('click', function () { setTab('code'); });
     $('#tabPdf').addEventListener('click', function () { setTab('pdf'); });
-    $('#btnOpenPdf').addEventListener('click', function () { $('#pdfInput').click(); });
     $('#pdfInput').addEventListener('change', function (e) {
       var f = e.target.files && e.target.files[0];
       e.target.value = '';

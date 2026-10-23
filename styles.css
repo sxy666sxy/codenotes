@@ -733,14 +733,17 @@ body.no-inline-notes .inline-note { display: none; }
 
 .pdf-view { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--pdf-bg); }
 .pdf-bar {
-  flex: none; display: flex; align-items: center; gap: 3px;
-  padding: 6px 10px; background: var(--panel); border-bottom: 1px solid var(--line);
-  overflow-x: auto; white-space: nowrap;
+  flex: none; display: flex; align-items: center; gap: 2px;
+  padding: 6px 8px; background: var(--panel); border-bottom: 1px solid var(--line);
+  overflow: hidden; white-space: nowrap; flex-wrap: nowrap;
 }
-.pdf-name {
-  font-size: 11.5px; color: var(--muted);
-  max-width: 30vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  padding: 0 4px;
+.pdf-bar .grow { flex: 1; min-width: 4px; }
+.sm-chip { height: 26px; padding: 0 9px; font-size: 11.5px; border-radius: 7px; }
+.pdf-name-row {
+  flex: none; padding: 3px 12px 5px;
+  background: var(--panel); border-bottom: 1px solid var(--line);
+  font-size: 11px; color: var(--muted); text-align: left;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
 .pdf-page {
   font-size: 11.5px; color: var(--muted); min-width: 58px; text-align: center;
@@ -800,8 +803,7 @@ body.tab-pdf .editor,
 body.tab-pdf .notes-panel { display: none !important; }
 
 @media (max-width: 880px) {
-  .pdf-bar { padding: 6px 8px; }
-  .pdf-name { max-width: 22vw; }
+  .pdf-bar { padding: 5px 6px; gap: 1px; }
   .pdf-stage { padding: 10px; }
   .pdf-trans {
     position: fixed; left: 0; right: 0; bottom: 0; top: auto;
@@ -972,12 +974,7 @@ body.tab-pdf .notes-panel { display: none !important; }
 .pdf-page-input:focus { border-color: var(--accent); }
 
 /* PDF 文件名放在按钮下方 */
-.pdf-open-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; flex: none; }
-.pdf-open-wrap .pdf-name {
-  max-width: 150px; padding: 0 2px;
-  font-size: 10.5px; line-height: 1.2; color: var(--muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
+
 
 /* 设置：高亮规则 */
 .rule-row { display: flex; align-items: center; gap: 6px; padding: 5px 2px; }

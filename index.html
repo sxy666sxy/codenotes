@@ -32,6 +32,7 @@
   <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
   <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 5.5 8.5 12 15 18.5"/></symbol>
   <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 5.5 15.5 12 9 18.5"/></symbol>
+  <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
   <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h9M17.5 7H20M4 17h3.5M12 17h8"/><circle cx="15" cy="7" r="2.4"/><circle cx="9.5" cy="17" r="2.4"/></symbol>
 </svg>
 
@@ -191,12 +192,9 @@
 
       <section class="pdf-view" id="pdfView" hidden>
         <div class="pdf-bar">
-          <div class="pdf-open-wrap">
-            <button class="chip" id="btnOpenPdf">
-              <svg class="ico sm"><use href="#i-pdf"/></svg><span>打开 PDF</span>
-            </button>
-            <span class="pdf-name" id="pdfName">未打开文件</span>
-          </div>
+          <button class="icon-btn sm" id="btnPdfFind" title="查找文字" aria-label="查找">
+            <svg class="ico sm"><use href="#i-search"/></svg>
+          </button>
           <span class="grow"></span>
           <span class="pdf-page-wrap">
             <input class="pdf-page-input" id="pdfPageInput" inputmode="numeric" value="1" aria-label="页码">
@@ -204,12 +202,15 @@
           </span>
           <button class="icon-btn sm" id="pdfZoomOut" title="缩小"><svg class="ico sm"><use href="#i-minus"/></svg></button>
           <button class="icon-btn sm" id="pdfZoomIn" title="放大"><svg class="ico sm"><use href="#i-plus"/></svg></button>
-          <button class="chip" id="pdfFit" title="适应宽度">适应</button>
-          <button class="chip" id="btnTranslate" title="翻译当前页">译</button>
-          <button class="chip" id="pdfTransToggle" title="切换原文 / 译文" hidden>译文</button>
-          <button class="chip" id="btnPdfFind" title="在 PDF 中查找">查找</button>
-          <button class="chip" id="btnPdfOutline" title="PDF 目录">目录</button>
+          <button class="icon-btn sm" id="pdfFit" title="适应宽度"><svg class="ico sm"><use href="#i-fit"/></svg></button>
+          <button class="chip sm-chip" id="btnTranslate" title="翻译当前页">译</button>
+          <button class="chip sm-chip" id="pdfTransToggle" title="切换原文 / 译文" hidden>译文</button>
+          <button class="icon-btn sm" id="btnPdfOutline" title="PDF 目录" aria-label="目录">
+            <svg class="ico sm"><use href="#i-menu"/></svg>
+          </button>
         </div>
+        <div class="pdf-name-row"><span id="pdfName">未打开文件</span></div>
+
         <div class="pdf-find" id="pdfFind" hidden>
           <input id="pdfFindInput" placeholder="在 PDF 中查找文字…" autocomplete="off" spellcheck="false">
           <span class="find-count" id="pdfFindCount"></span>
