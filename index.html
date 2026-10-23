@@ -48,9 +48,8 @@
     </div>
     <div class="top-spacer"></div>
     <div class="menu-wrap" id="importWrap">
-      <button class="btn primary" id="btnImport" aria-haspopup="menu">
-        <svg class="ico"><use href="#i-upload"/></svg><span>导入</span>
-        <svg class="ico xs"><use href="#i-down"/></svg>
+      <button class="icon-btn" id="btnImport" aria-haspopup="menu" title="导入代码项目">
+        <svg class="ico"><use href="#i-upload"/></svg>
       </button>
       <div class="menu" id="importMenu" hidden role="menu">
         <button class="menu-item" id="btnImportZip" role="menuitem">
@@ -65,8 +64,8 @@
     </div>
 
     <div class="menu-wrap" id="pdfWrap">
-      <button class="btn" id="btnPdfImport" title="导入 PDF">
-        <svg class="ico"><use href="#i-pdf"/></svg><span>PDF</span>
+      <button class="icon-btn" id="btnPdfImport" aria-haspopup="menu" title="导入 PDF">
+        <svg class="ico"><use href="#i-pdf"/></svg>
       </button>
       <div class="menu" id="pdfMenu" hidden role="menu">
         <button class="menu-item" id="btnPdfFile" role="menuitem">
@@ -203,7 +202,15 @@
           <button class="chip" id="pdfFit" title="适应宽度">适应</button>
           <button class="chip" id="btnTranslate" title="翻译当前页">译</button>
           <button class="chip" id="pdfTransToggle" title="切换原文 / 译文" hidden>译文</button>
+          <button class="chip" id="btnPdfFind" title="在 PDF 中查找">查找</button>
           <button class="chip" id="btnPdfOutline" title="PDF 目录">目录</button>
+        </div>
+        <div class="pdf-find" id="pdfFind" hidden>
+          <input id="pdfFindInput" placeholder="在 PDF 中查找文字…" autocomplete="off" spellcheck="false">
+          <span class="find-count" id="pdfFindCount"></span>
+          <button class="icon-btn sm" id="pdfFindPrev" title="上一个"><svg class="ico sm"><use href="#i-up"/></svg></button>
+          <button class="icon-btn sm" id="pdfFindNext" title="下一个"><svg class="ico sm"><use href="#i-down"/></svg></button>
+          <button class="icon-btn sm" id="pdfFindClose" title="关闭"><svg class="ico sm"><use href="#i-x"/></svg></button>
         </div>
         <div class="pdf-stage" id="pdfStage">
           <div class="pdf-pages" id="pdfPages"></div>

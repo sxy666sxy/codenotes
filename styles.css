@@ -929,3 +929,28 @@ body.tab-pdf .notes-panel { display: none !important; }
   .pt-grip { display: flex; }
   .pdf-trans { transition: height .12s ease; }
 }
+
+/* PDF 查找 */
+.pdf-find {
+  flex: none; display: flex; align-items: center; gap: 6px;
+  padding: 7px 10px; background: var(--panel-2); border-bottom: 1px solid var(--line);
+}
+.pdf-find input {
+  flex: 1; min-width: 0; height: 30px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: 7px;
+  background: var(--panel); color: var(--text); font: 12.5px var(--font-ui); outline: 0;
+}
+.pdf-find input:focus { border-color: var(--accent); }
+.pdf-find-hit {
+  position: absolute; z-index: 4; background: rgba(255, 213, 0, .42);
+  border: 1px solid rgba(230, 160, 0, .8); border-radius: 2px;
+  pointer-events: none;
+}
+
+/* 使用说明 */
+.guide { font-size: 12.5px; line-height: 1.85; color: var(--text); }
+.guide p { margin: 0 0 10px; color: var(--muted); }
+.guide h4 { margin: 16px 0 6px; font-size: 13px; font-weight: 650; }
+.guide ul { margin: 0; padding-left: 18px; color: var(--muted); }
+.guide li { margin: 3px 0; }
+.guide b { color: var(--text); font-weight: 600; }

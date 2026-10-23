@@ -1286,7 +1286,7 @@
   var pdfState = { doc: null, page: 1, scale: 1, fit: true, name: '', token: 0 };
 
   function setCodeFont(px) {
-    px = Math.max(9, Math.min(24, px));
+    px = Math.max(4, Math.min(24, px));
     document.documentElement.style.setProperty('--code-size', (Math.round(px * 10) / 10) + 'px');
     return px;
   }
@@ -1455,6 +1455,7 @@
       pdfState.doc = doc;
       pdfState.trans = {};
       pdfState.showTrans = false;
+      pdfState.pageBlocks = {};
       $('#pdfTransToggle').hidden = true;
       $('#pdfTransToggle').classList.remove('on');
       var first = await doc.getPage(1);
@@ -1618,6 +1619,102 @@
     pdfState.fit = true;
     pdfState.scale = fitScale();
     applyScale();
+  }
+
+  /* ---------------- PDF 文字查找 ---------------- */
+  var pdfSearch = { term: '', matches: [], idx: -1 };
+
+  function clearPdfHits() {
+    var hits = document.querySelectorAll('.pdf-find-hit');
+    Array.prototype.forEach.call(hits, function (el) { el.remove(); });
+  }
+
+  function openPdfFind() {
+    if (!pdfState.doc) { toast('先打开一个 PDF'); return; }
+    $('#pdfFind').hidden = false;
+    setTimeout(function () { $('#pdfFindInput').focus(); }, 30);
+  }
+
+  function closePdfFind() {
+    $('#pdfFind').hidden = true;
+    clearPdfHits();
+    $('#pdfFindCount').textContent = '';
+  }
+
+  async function getPageBlocks(no) {
+    if (!pdfState.pageBlocks) pdfState.pageBlocks = {};
+    if (pdfState.pageBlocks[no]) return pdfState.pageBlocks[no];
+    var page = await pdfState.doc.getPage(no);
+    var blocks = await extractBlocks(page);
+    pdfState.pageBlocks[no] = blocks;
+    return blocks;
+  }
+
+  async function runPdfSearch() {
+    var term = $('#pdfFindInput').value.trim();
+    clearPdfHits();
+    pdfSearch.term = term;
+    pdfSearch.matches = [];
+    pdfSearch.idx = -1;
+    if (!pdfState.doc || !term) { $('#pdfFindCount').textContent = ''; return; }
+
+    var needle = term.toLowerCase();
+    $('#pdfFindCount').textContent = '搜索中…';
+    for (var p = 1; p <= pdfState.doc.numPages; p++) {
+      var blocks = await getPageBlocks(p);
+      for (var bi = 0; bi < blocks.length; bi++) {
+        var lines = blocks[bi].lines || [];
+        for (var li = 0; li < lines.length; li++) {
+          var ln = lines[li];
+          var t = String(ln.t || '').toLowerCase();
+          var from = 0;
+          var pos;
+          while ((pos = t.indexOf(needle, from)) !== -1) {
+            pdfSearch.matches.push({ page: p, x: ln.x, y: ln.y, w: ln.w, h: ln.h });
+            from = pos + needle.length;
+            if (pdfSearch.matches.length >= 500) break;
+          }
+          if (pdfSearch.matches.length >= 500) break;
+        }
+        if (pdfSearch.matches.length >= 500) break;
+      }
+      $('#pdfFindCount').textContent = '搜索中 ' + p + '/' + pdfState.doc.numPages;
+      if (pdfSearch.matches.length >= 500) break;
+    }
+
+    if (!pdfSearch.matches.length) {
+      $('#pdfFindCount').textContent = '无结果';
+      return;
+    }
+    pdfSearch.idx = 0;
+    showPdfMatch(0);
+  }
+
+  function showPdfMatch(i) {
+    var m = pdfSearch.matches[i];
+    if (!m) return;
+    var n = pdfSearch.matches.length;
+    pdfSearch.idx = i;
+    $('#pdfFindCount').textContent = (i + 1) + ' / ' + n;
+    goToPage(m.page);
+    var stage = $('#pdfStage');
+    var pw = pdfState.pages[m.page - 1];
+    if (!pw) return;
+    stage.scrollTop = pw.wrap.offsetTop + m.y * pdfState.scale - 90;
+    clearPdfHits();
+    var hit = document.createElement('div');
+    hit.className = 'pdf-find-hit';
+    hit.style.left = (m.x * pdfState.scale - 2) + 'px';
+    hit.style.top = (m.y * pdfState.scale - 2) + 'px';
+    hit.style.width = (m.w * pdfState.scale + 4) + 'px';
+    hit.style.height = (m.h * pdfState.scale + 4) + 'px';
+    pw.wrap.appendChild(hit);
+  }
+
+  function stepPdfMatch(dir) {
+    if (!pdfSearch.matches.length) return;
+    var i = (pdfSearch.idx + dir + pdfSearch.matches.length) % pdfSearch.matches.length;
+    showPdfMatch(i);
   }
 
   /* ---------------- PDF 目录 / 跳页 ---------------- */
@@ -2101,7 +2198,8 @@
           return {
             x: ln.x, y: ln.y,
             w: Math.max(4, ln.right - ln.x),
-            h: Math.max(4, ln.h)
+            h: Math.max(4, ln.h),
+            t: ln.text || ''
           };
         }),
         text: b.text
@@ -2446,7 +2544,14 @@
       '<label class="set-field">接口地址<input id="trBase" autocomplete="off" placeholder="https://api.deepseek.com/v1"></label>',
       '<label class="set-field">模型<input id="trModel" autocomplete="off" placeholder="deepseek-chat"></label>',
       '</div>',
-      '<label class="set-field">目标语言<input id="trTarget" autocomplete="off" placeholder="简体中文"></label>'
+      '<label class="set-field">目标语言<input id="trTarget" autocomplete="off" placeholder="简体中文"></label>',
+      '<div class="set-sep">AI</div>',
+      '<div class="set-row"><div class="set-text"><b>账户余额</b>' +
+      '<span id="balText">用上面的 API Key 查询（DeepSeek）</span></div>' +
+      '<button class="btn sm" id="btnBalance">刷新</button></div>',
+      '<div class="set-row"><div class="set-text"><b>使用说明</b>' +
+      '<span>导入、注释、PDF 阅读与翻译的用法</span></div>' +
+      '<button class="btn sm" id="btnGuide">查看</button></div>'
     ].join(''), [{ label: '完成', primary: true, onClick: closeModal }]);
 
     $$('#modalBody .switch').forEach(function (btn) {
@@ -2480,6 +2585,76 @@
       var el = $(q);
       if (el) el.addEventListener('change', saveTransSettings);
     });
+
+    var balBtn = $('#btnBalance');
+    if (balBtn) balBtn.addEventListener('click', refreshBalance);
+    var guideBtn = $('#btnGuide');
+    if (guideBtn) guideBtn.addEventListener('click', openGuide);
+  }
+
+  async function refreshBalance() {
+    var el = $('#balText');
+    if (!el) return;
+    var cfg = getTransCfg();
+    if (!cfg.apiKey) {
+      el.textContent = '还没有填 API Key（在上方「PDF 翻译」里填写）';
+      return;
+    }
+    el.textContent = '查询中…';
+    try {
+      var base = String(cfg.baseURL || 'https://api.deepseek.com/v1').replace(/\/+$/, '').replace(/\/v1$/, '');
+      var r = await fetch(base + '/user/balance', {
+        headers: { 'Authorization': 'Bearer ' + cfg.apiKey }
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      var d = await r.json();
+      var info = (d.balance_infos || [])[0];
+      if (!info) throw new Error('该服务不支持余额查询');
+      el.textContent = '可用 ' + info.total_balance + ' ' + info.currency +
+        '（赠送 ' + info.granted_balance + '，充值 ' + info.topped_up_balance + '）';
+    } catch (e) {
+      el.textContent = '查询失败：' + ((e && e.message) || '未知错误');
+    }
+  }
+
+  function openGuide() {
+    openModal('使用说明', [
+      '<div class="guide">',
+      '<p><b>CodeNotes</b> 是本地代码 / 文档注释工具：左侧目录、右侧正文，数据只存在本机。</p>',
+      '<h4>一、导入代码</h4>',
+      '<ul>',
+      '<li>顶栏 <b>上传图标</b> → 压缩包 / 文件夹</li>',
+      '<li>安卓的「文件夹」用系统目录选择器，保留完整的子目录结构</li>',
+      '<li>乱码、二进制文件也照原样显示（记事本模式），不跳过</li>',
+      '</ul>',
+      '<h4>二、注释</h4>',
+      '<ul>',
+      '<li>点任意一行 → 在右侧写注释 → 保存（或 Ctrl+Enter）</li>',
+      '<li>行尾会以「   # 注释」显示，可在设置里关掉</li>',
+      '<li>文件夹行尾的铅笔可写目录注释，显示成「名称（注释）」</li>',
+      '<li>右上角 <b>导出</b> 可把注释导出成 Markdown</li>',
+      '</ul>',
+      '<h4>三、PDF</h4>',
+      '<ul>',
+      '<li>顶栏 <b>PDF 图标</b> → 选 PDF 文件或导入压缩包；项目里的 PDF 在左侧直接点开</li>',
+      '<li>连续滚动翻页，双指捏合缩放，放大后可以左右滑动</li>',
+      '<li><b>目录</b>：压缩包内其它 PDF、书签、页面跳转</li>',
+      '<li><b>查找</b>：搜索 PDF 文字，用 ↑↓ 逐个跟踪命中位置</li>',
+      '<li><b>译</b>：翻译当前页；完成后用「原文 / 译文」切换，A− / A+ 调字号，拖顶部手柄调面板高度</li>',
+      '</ul>',
+      '<h4>四、设置</h4>',
+      '<ul>',
+      '<li>行尾注释、目录注释、代码自动换行开关</li>',
+      '<li>PDF 翻译：填 DeepSeek / OpenAI 兼容的 API Key（质量优先），也可切免费 Google</li>',
+      '<li>AI 余额：点「刷新」查询当前 Key 的余额</li>',
+      '</ul>',
+      '<h4>五、数据</h4>',
+      '<ul>',
+      '<li>注释保存在本机，卸载应用会清空，重要内容请先导出</li>',
+      '<li>会自动记住上次打开的项目、PDF 和页码</li>',
+      '</ul>',
+      '</div>'
+    ].join(''), [{ label: '知道了', primary: true, onClick: closeModal }]);
   }
 
   /* ------------------------------------------------------------
@@ -2842,6 +3017,20 @@
       e.target.value = '';
       if (f) importPdfZip(f);
     });
+    $('#btnPdfFind').addEventListener('click', openPdfFind);
+    $('#pdfFindClose').addEventListener('click', closePdfFind);
+    $('#pdfFindPrev').addEventListener('click', function () { stepPdfMatch(-1); });
+    $('#pdfFindNext').addEventListener('click', function () { stepPdfMatch(1); });
+    var pdfFindTimer = 0;
+    $('#pdfFindInput').addEventListener('input', function () {
+      clearTimeout(pdfFindTimer);
+      pdfFindTimer = setTimeout(runPdfSearch, 400);
+    });
+    $('#pdfFindInput').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); stepPdfMatch(e.shiftKey ? -1 : 1); }
+      if (e.key === 'Escape') closePdfFind();
+    });
+
     $('#btnPdfOutline').addEventListener('click', function () { setPdfOutline(); });
     $('#poClose').addEventListener('click', function () { setPdfOutline(false); });
 
