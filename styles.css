@@ -997,17 +997,22 @@ body.tab-pdf .notes-panel { display: none !important; }
 /* 设置：左侧菜单 */
 .modal-card.modal-wide { width: min(880px, 96vw); }
 .modal-card.modal-wide .modal-body { padding: 0; overflow: hidden; }
-.set-shell { display: flex; min-height: 420px; max-height: 72dvh; }
-.set-nav {
-  width: 200px; flex: none;
-  display: flex; flex-direction: column; gap: 3px;
-  padding: 12px 8px; background: var(--panel-2);
-  border-right: 1px solid var(--line-2);
+.set-shell { display: flex; flex-direction: column; min-height: 420px; max-height: 80dvh; }
+.set-brand-row {
+  flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; border-bottom: 1px solid var(--line-2);
 }
-.set-brand { display: flex; align-items: center; gap: 9px; padding: 4px 6px 14px; }
-.set-brand img { width: 34px; height: 34px; border-radius: 9px; flex: none; }
-.set-brand b { display: block; font-size: 13px; line-height: 1.3; }
-.set-brand span { font-size: 10.5px; color: var(--muted); }
+.set-brand-row img { width: 34px; height: 34px; border-radius: 9px; flex: none; }
+.set-brand-text b { display: block; font-size: 13.5px; line-height: 1.3; }
+.set-brand-text span { font-size: 10.5px; color: var(--muted); }
+.set-main { flex: 1; display: flex; min-height: 0; }
+.set-nav {
+  width: 190px; flex: none;
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 10px 8px; background: var(--panel-2);
+  border-right: 1px solid var(--line-2);
+  overflow-y: auto;
+}
 .set-tab {
   text-align: left; padding: 9px 10px;
   border: 0; border-radius: 8px; background: none;
@@ -1019,15 +1024,18 @@ body.tab-pdf .notes-panel { display: none !important; }
 .set-panel[hidden] { display: none; }
 
 @media (max-width: 880px) {
-  .set-shell { flex-direction: column; min-height: 0; max-height: 74dvh; }
+  .set-shell { min-height: 0; max-height: 82dvh; }
+  .set-main { flex-direction: column; }
   .set-nav {
-    width: auto; flex-direction: row; align-items: center;
-    overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line-2);
-    padding: 8px; gap: 4px;
+    width: auto; flex-direction: row; align-items: stretch;
+    overflow: visible; border-right: 0; border-bottom: 1px solid var(--line-2);
+    padding: 6px; gap: 4px;
   }
-  .set-brand { padding: 2px 8px 2px 2px; }
-  .set-brand img { width: 26px; height: 26px; }
-  .set-brand b { font-size: 12px; }
-  .set-tab { white-space: nowrap; padding: 7px 10px; }
+  .set-tab {
+    flex: 1; text-align: center; white-space: normal;
+    padding: 8px 4px; font-size: 11.5px; line-height: 1.35;
+  }
   .set-panels { padding: 12px; }
+  .set-brand-row { padding: 10px 14px; }
+  .set-brand-row img { width: 30px; height: 30px; }
 }

@@ -68,7 +68,16 @@
 
   var esc = function (s) { return HL.escape(String(s == null ? '' : s)); };
 
-  var APP_VERSION = '1.4.1';
+  var APP_VERSION = '1.4.2';
+  var AI_PRESETS = [
+    { id: 'deepseek', name: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+    { id: 'openai', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+    { id: 'qwen', name: '通义千问（阿里云）', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
+    { id: 'glm', name: '智谱 GLM', baseURL: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash' },
+    { id: 'kimi', name: 'Moonshot Kimi', baseURL: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
+    { id: 'silicon', name: '硅基流动 SiliconFlow', baseURL: 'https://api.siliconflow.cn/v1', model: 'Qwen/Qwen2.5-7B-Instruct' },
+    { id: 'custom', name: '自定义（OpenAI 兼容）', baseURL: '', model: '' }
+  ];
   var LS_KEY = 'codenotes.v1';
   var MAX_PREVIEW = 8 * 1024 * 1024;   // 单个文本文件预览上限（字符）
   var MAX_LINE_CHARS = 4000;           // 单行显示上限（压缩代码常常几百万字符一行）
@@ -418,7 +427,12 @@
     renderTree();
     renderNoteStat();
 
-    var first = pickFirstFile(entries);
+    var target = null;
+    if (store.lastFile && store.lastFile.sig === state.sig &&
+        byPath.has(store.lastFile.path)) {
+      target = byPath.get(store.lastFile.path);
+    }
+    var first = target || pickFirstFile(entries);
     if (first) openFile(first.path);
     if (isMobile()) {
       setSidebar(false, false);
@@ -775,6 +789,20 @@
     renderNotesUI();
     markActiveRow();
     renderNoteStat();
+
+    // 记住这个文件，下次启动直接打开
+    if (state.sig) {
+      store.lastFile = { sig: state.sig, path: path, scroll: 0, at: Date.now() };
+      saveStore();
+    }
+    var lf = store.lastFile;
+    if (lf && lf.path === path && lf.scroll) {
+      var want = lf.scroll;
+      requestAnimationFrame(function () {
+        var v = $('#viewer');
+        if (v) v.scrollTop = want;
+      });
+    }
   }
 
   function renderHead() {
@@ -1399,6 +1427,13 @@
     $('#pdfView').hidden = !isPdf;
 
     if (isPdf) {
+      if (!pdfState.doc && pdfState.pending) {
+        var rec = pdfState.pending;
+        pdfState.pending = null;
+        openPdfData(new Uint8Array(rec.data), rec.name).then(function () {
+          if (rec.page && rec.page > 1) goToPage(rec.page);
+        });
+      }
       $('#editor').hidden = true;
       $('#welcome').hidden = true;
       if (state.notesPanel) setNotesPanel(false);
@@ -1433,7 +1468,7 @@
     doc: null, name: '', scale: 1, fit: true,
     baseW: 595, baseH: 842, pages: [],
     observer: null, current: 1, previewScale: 0,
-    zipPdfs: [], lastData: null, transScale: 1
+    zipPdfs: [], lastData: null, transScale: 1, pending: null
   };
   var transCache = {};
   (function loadTransCache() {
@@ -1942,15 +1977,11 @@
   }
 
   function restorePdfSession() {
+    // 只把上次的 PDF 放到内存里，启动仍然停在代码页；
+    // 用户点「PDF 阅读」时再真正打开（并回到上次页码）。
     idbGet('lastPdf').then(function (rec) {
       if (!rec || !rec.data) return;
-      if (rec.tab && rec.tab !== 'pdf') {
-        // 上次停在代码页：只把 PDF 放好，不打扰
-        return;
-      }
-      openPdfData(new Uint8Array(rec.data), rec.name).then(function () {
-        if (rec.page && rec.page > 1) goToPage(rec.page);
-      });
+      pdfState.pending = rec;
     }).catch(function () { /* 忽略 */ });
   }
 
@@ -2212,6 +2243,7 @@
     var t = store.settings.translate || {};
     return {
       provider: t.provider || 'llm',
+      preset: t.preset || 'deepseek',
       baseURL: t.baseURL || 'https://api.deepseek.com/v1',
       model: t.model || 'deepseek-chat',
       apiKey: t.apiKey || '',
@@ -2649,8 +2681,14 @@
 
   function saveTransSettings() {
     var get = function (sel, dflt) { var el = $(sel); return el ? el.value : dflt; };
+    var val = get('#trProvider', 'llm:deepseek');
+    var provider = val === 'google' ? 'google' : 'llm';
+    var preset = val === 'google'
+      ? ((store.settings.translate && store.settings.translate.preset) || 'deepseek')
+      : (val.split(':')[1] || 'deepseek');
     store.settings.translate = {
-      provider: get('#trProvider', 'llm') || 'llm',
+      provider: provider,
+      preset: preset,
       apiKey: get('#trKey', ''),
       baseURL: get('#trBase', ''),
       model: get('#trModel', ''),
@@ -2692,11 +2730,15 @@
       '<button class="btn sm" id="btnAddRule" style="margin:2px 2px 10px">+ 添加一组</button>'
     ].join('');
 
+    var presetOptions = AI_PRESETS.map(function (p) {
+      var on = tr.provider === 'llm' && (tr.preset || 'deepseek') === p.id;
+      return '<option value="llm:' + p.id + '"' + (on ? ' selected' : '') + '>' + esc(p.name) + '</option>';
+    }).join('');
     var pdfPanel = [
-      '<label class="set-field">翻译服务',
+      '<label class="set-field">服务商',
       '<select id="trProvider">',
-      '<option value="llm"' + (tr.provider === 'llm' ? ' selected' : '') + '>DeepSeek / OpenAI 兼容（质量最好，需 Key）</option>',
-      '<option value="google"' + (tr.provider === 'google' ? ' selected' : '') + '>免费 Google（无需 Key，国内可能连不上）</option>',
+      presetOptions,
+      '<option value="google"' + (tr.provider === 'google' ? ' selected' : '') + '>免费 Google（无需 Key）</option>',
       '</select></label>',
       '<div id="trLlmFields">',
       '<label class="set-field">API Key<input id="trKey" type="password" autocomplete="off" placeholder="sk-..."></label>',
@@ -2714,11 +2756,12 @@
 
     openModal('设置', [
       '<div class="set-shell">',
-      '<aside class="set-nav">',
-      '<div class="set-brand">',
+      '<div class="set-brand-row">',
       '<img src="icon.svg" alt="">',
-      '<div><b>CodeNotes</b><span>v' + APP_VERSION + '</span></div>',
+      '<div class="set-brand-text"><b>CodeNotes</b><span>v' + APP_VERSION + '</span></div>',
       '</div>',
+      '<div class="set-main">',
+      '<aside class="set-nav">',
       settingsTabBtn('code', '代码注释及高亮', active),
       settingsTabBtn('pdf', 'PDF · AI 配置', active),
       settingsTabBtn('guide', '软件使用说明', active),
@@ -2727,6 +2770,7 @@
       '<section class="set-panel" data-panel="code"' + (active === 'code' ? '' : ' hidden') + '>' + codePanel + '</section>',
       '<section class="set-panel" data-panel="pdf"' + (active === 'pdf' ? '' : ' hidden') + '>' + pdfPanel + '</section>',
       '<section class="set-panel" data-panel="guide"' + (active === 'guide' ? '' : ' hidden') + '>' + guidePanel + '</section>',
+      '</div>',
       '</div>',
       '</div>'
     ].join(''), [{ label: '完成', primary: true, onClick: closeModal }]);
@@ -2789,7 +2833,32 @@
       if (fields) fields.style.display = sel && sel.value === 'llm' ? '' : 'none';
     };
     syncFields();
-    if (sel) sel.addEventListener('change', function () { saveTransSettings(); syncFields(); });
+    if (sel) {
+      sel.addEventListener('change', function () {
+        var val = sel.value;
+        if (val === 'google') {
+          saveTransSettings();
+          syncFields();
+          return;
+        }
+        var pid = val.split(':')[1];
+        var preset = AI_PRESETS.filter(function (p) { return p.id === pid; })[0];
+        var cur = getTransCfg();
+        var next = {
+          provider: 'llm',
+          preset: pid,
+          apiKey: cur.apiKey,
+          target: cur.target,
+          baseURL: (preset && preset.baseURL) || cur.baseURL,
+          model: (preset && preset.model) || cur.model
+        };
+        store.settings.translate = next;
+        saveStore();
+        if (baseEl) baseEl.value = next.baseURL;
+        if (modelEl) modelEl.value = next.model;
+        syncFields();
+      });
+    }
     ['#trKey', '#trBase', '#trModel', '#trTarget'].forEach(function (q) {
       var el = $(q);
       if (el) el.addEventListener('change', saveTransSettings);
@@ -3408,6 +3477,16 @@
       $('#btnClearFilter').hidden = true;
       renderTree();
     });
+
+    var viewScrollTimer = 0;
+    $('#viewer').addEventListener('scroll', function () {
+      clearTimeout(viewScrollTimer);
+      viewScrollTimer = setTimeout(function () {
+        if (!store.lastFile || store.lastFile.path !== state.current) return;
+        store.lastFile.scroll = $('#viewer').scrollTop;
+        saveStore();
+      }, 400);
+    }, { passive: true });
 
     $('#lines').addEventListener('click', function (e) {
       if (e.target.closest('.load-more')) return;
