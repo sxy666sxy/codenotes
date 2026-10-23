@@ -68,6 +68,7 @@
 
   var esc = function (s) { return HL.escape(String(s == null ? '' : s)); };
 
+  var APP_VERSION = '1.4.1';
   var LS_KEY = 'codenotes.v1';
   var MAX_PREVIEW = 8 * 1024 * 1024;   // 单个文本文件预览上限（字符）
   var MAX_LINE_CHARS = 4000;           // 单行显示上限（压缩代码常常几百万字符一行）
@@ -1517,6 +1518,10 @@
       pdfState.trans = {};
       pdfState.showTrans = false;
       pdfState.pageBlocks = {};
+      outlineTrans = null;
+      outlineItemsFlat = [];
+      var poBtn = $('#poTranslate');
+      if (poBtn) poBtn.textContent = '译';
       $('#pdfTransToggle').hidden = true;
       $('#pdfTransToggle').classList.remove('on');
       var first = await doc.getPage(1);
@@ -1818,6 +1823,8 @@
   }
 
   var outlineSeq = 0;
+  var outlineItemsFlat = [];
+  var outlineTrans = null;
   async function buildOutline() {
     var body = $('#poBody');
     if (!body || !pdfState.doc) return;
@@ -1845,36 +1852,64 @@
     if (token !== outlineSeq) return;
     if (outline && outline.length) {
       var list2 = document.createElement('div');
+      outlineItemsFlat = [];
       (function add(items, depth) {
         items.forEach(function (it) {
+          var idx = outlineItemsFlat.push({ title: it.title || '(未命名)', dest: it.dest }) - 1;
           var btn = document.createElement('button');
           btn.className = 'po-item';
           btn.style.paddingLeft = (8 + depth * 12) + 'px';
-          btn.textContent = it.title || '(未命名)';
-          btn.title = it.title || '';
+          var label = outlineTrans && outlineTrans[idx] ? outlineTrans[idx] : (it.title || '(未命名)');
+          btn.textContent = label;
+          btn.title = outlineTrans && outlineTrans[idx]
+            ? (it.title || '') + ' → ' + outlineTrans[idx]
+            : (it.title || '');
           btn.addEventListener('click', function () { jumpToDest(it.dest); });
           list2.appendChild(btn);
           if (it.items && it.items.length) add(it.items, depth + 1);
         });
       })(outline, 0);
-      body.appendChild(poSection('当前 PDF 书签', list2));
+      body.appendChild(poSection('当前 PDF 书签' + (outlineTrans ? '（已翻译）' : ''), list2));
+    } else {
+      var empty = document.createElement('div');
+      empty.className = 'po-title';
+      empty.textContent = '这个 PDF 没有书签目录';
+      body.appendChild(empty);
     }
 
-    var pages = document.createElement('div');
-    pages.className = 'po-pages';
-    for (var i = 1; i <= pdfState.doc.numPages; i++) {
-      (function (n) {
-        var b = document.createElement('button');
-        b.className = 'po-page' + (n === pdfState.current ? ' on' : '');
-        b.textContent = String(n);
-        b.addEventListener('click', function () {
-          goToPage(n);
-          setPdfOutline(false);
-        });
-        pages.appendChild(b);
-      })(i);
+  }
+
+  async function translateOutline() {
+    var btn = $('#poTranslate');
+    if (outlineTrans) {
+      outlineTrans = null;
+      buildOutline();
+      if (btn) btn.textContent = '译';
+      return;
     }
-    body.appendChild(poSection('当前 PDF 页面', pages));
+    if (!outlineItemsFlat.length) { toast('这个 PDF 没有书签目录'); return; }
+    if (btn) btn.textContent = '翻译中…';
+    try {
+      var titles = outlineItemsFlat.map(function (it) { return it.title; });
+      var payload = titles.map(function (t, i) {
+        return '【' + (i + 1) + '】' + t.replace(/\n/g, ' ');
+      }).join('\n');
+      var out = await translateChunk(payload);
+      var parts = out.split(/【\s*(\d+)\s*】/);
+      var map = {};
+      for (var i = 1; i < parts.length; i += 2) {
+        var n = Number(parts[i]);
+        var txt = (parts[i + 1] || '').trim();
+        if (n && txt) map[n] = txt;
+      }
+      if (!Object.keys(map).length) throw new Error('译文格式解析失败');
+      outlineTrans = titles.map(function (t, i) { return map[i + 1] || t; });
+      buildOutline();
+      if (btn) btn.textContent = '原文';
+    } catch (e) {
+      if (btn) btn.textContent = '译';
+      toast('目录翻译失败：' + ((e && e.message) || '未知错误'));
+    }
   }
 
   async function jumpToDest(dest) {
@@ -2557,7 +2592,11 @@
     $('#modal').hidden = false;
   }
 
-  function closeModal() { $('#modal').hidden = true; }
+  function closeModal() {
+    $('#modal').hidden = true;
+    var card = document.querySelector('.modal-card');
+    if (card) card.classList.remove('modal-wide');
+  }
 
   /* ------------------------------------------------------------
      显示设置
@@ -2620,22 +2659,28 @@
     saveStore();
   }
 
-  function openSettings() {
+  function settingsTabBtn(key, label, active) {
+    return '<button class="set-tab' + (key === active ? ' on' : '') + '" data-tab="' + key + '">' +
+      esc(label) + '</button>';
+  }
+
+  function openSettings(tab) {
+    var active = tab || 'code';
     var inline = store.settings.inlineNotes !== false;
     var tree = store.settings.treeNotes !== false;
     var wrap = store.settings.wrapCode === true;
     var tr = getTransCfg();
 
-    openModal('设置', [
+    var codePanel = [
       '<div class="set-list">',
       '<div class="set-row"><div class="set-text"><b>行尾显示行注释</b>' +
-      '<span>在每行代码后面显示「   # 注释」，即 3 个空格 + #。关闭后注释仍保留，只是不显示。</span></div>',
+      '<span>在每行代码后面显示「   # 注释」（3 个空格 + #）。关闭后注释仍保留，只是不显示。</span></div>',
       '<button class="switch" role="switch" data-key="inlineNotes" aria-checked="' + inline + '"><i></i></button></div>',
       '<div class="set-row"><div class="set-text"><b>目录名称后显示注释</b>' +
-      '<span>在左侧文件和文件夹名称后显示「（注释）」。注释是单独保存的，不会写进源码。</span></div>',
+      '<span>在左侧文件和文件夹名称后显示「（注释）」，注释单独保存，不写进源码。</span></div>',
       '<button class="switch" role="switch" data-key="treeNotes" aria-checked="' + tree + '"><i></i></button></div>',
       '<div class="set-row"><div class="set-text"><b>代码自动换行</b>' +
-      '<span>关闭时（默认）长行和行尾注释不换行，可以左右滑动查看；打开后按窗口宽度折行。</span></div>',
+      '<span>关闭时（默认）长行不换行，可以左右滑动查看；打开后按窗口宽度折行。</span></div>',
       '<button class="switch" role="switch" data-key="wrapCode" aria-checked="' + wrap + '"><i></i></button></div>',
       '</div>',
       '<div class="set-sep">代码高亮</div>',
@@ -2644,8 +2689,10 @@
       '<input type="color" id="noteColor" value="' + (store.settings.noteColor || '#f2b64b') + '"></div>',
       '<div class="set-field" style="padding-bottom:2px">自定义高亮词（每组一行，词用逗号分隔，如 TODO,FIXME,危险）</div>',
       '<div id="ruleList">' + ruleRowsHtml() + '</div>',
-      '<button class="btn sm" id="btnAddRule" style="margin:2px 2px 10px">+ 添加一组</button>',
-      '<div class="set-sep">PDF 翻译</div>',
+      '<button class="btn sm" id="btnAddRule" style="margin:2px 2px 10px">+ 添加一组</button>'
+    ].join('');
+
+    var pdfPanel = [
       '<label class="set-field">翻译服务',
       '<select id="trProvider">',
       '<option value="llm"' + (tr.provider === 'llm' ? ' selected' : '') + '>DeepSeek / OpenAI 兼容（质量最好，需 Key）</option>',
@@ -2657,14 +2704,44 @@
       '<label class="set-field">模型<input id="trModel" autocomplete="off" placeholder="deepseek-chat"></label>',
       '</div>',
       '<label class="set-field">目标语言<input id="trTarget" autocomplete="off" placeholder="简体中文"></label>',
-      '<div class="set-sep">AI</div>',
-      '<div class="set-row"><div class="set-text"><b>账户余额</b>' +
+      '<div class="set-sep">账户</div>',
+      '<div class="set-row"><div class="set-text"><b>AI 余额</b>' +
       '<span id="balText">用上面的 API Key 查询（DeepSeek）</span></div>' +
-      '<button class="btn sm" id="btnBalance">刷新</button></div>',
-      '<div class="set-row"><div class="set-text"><b>使用说明</b>' +
-      '<span>导入、注释、PDF 阅读与翻译的用法</span></div>' +
-      '<button class="btn sm" id="btnGuide">查看</button></div>'
+      '<button class="btn sm" id="btnBalance">刷新</button></div>'
+    ].join('');
+
+    var guidePanel = guideHtml();
+
+    openModal('设置', [
+      '<div class="set-shell">',
+      '<aside class="set-nav">',
+      '<div class="set-brand">',
+      '<img src="icon.svg" alt="">',
+      '<div><b>CodeNotes</b><span>v' + APP_VERSION + '</span></div>',
+      '</div>',
+      settingsTabBtn('code', '代码注释及高亮', active),
+      settingsTabBtn('pdf', 'PDF · AI 配置', active),
+      settingsTabBtn('guide', '软件使用说明', active),
+      '</aside>',
+      '<div class="set-panels">',
+      '<section class="set-panel" data-panel="code"' + (active === 'code' ? '' : ' hidden') + '>' + codePanel + '</section>',
+      '<section class="set-panel" data-panel="pdf"' + (active === 'pdf' ? '' : ' hidden') + '>' + pdfPanel + '</section>',
+      '<section class="set-panel" data-panel="guide"' + (active === 'guide' ? '' : ' hidden') + '>' + guidePanel + '</section>',
+      '</div>',
+      '</div>'
     ].join(''), [{ label: '完成', primary: true, onClick: closeModal }]);
+
+    var card = document.querySelector('.modal-card');
+    if (card) card.classList.add('modal-wide');
+
+    // 左侧切换
+    $$('.set-tab').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var key = btn.dataset.tab;
+        $$('.set-tab').forEach(function (b) { b.classList.toggle('on', b === btn); });
+        $$('.set-panel').forEach(function (p) { p.hidden = p.dataset.panel !== key; });
+      });
+    });
 
     $$('#modalBody .switch').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -2675,27 +2752,6 @@
         saveStore();
         applyDisplaySettings();
       });
-    });
-
-    var keyEl = $('#trKey');
-    if (keyEl) keyEl.value = tr.apiKey;
-    var baseEl = $('#trBase');
-    if (baseEl) baseEl.value = tr.baseURL;
-    var modelEl = $('#trModel');
-    if (modelEl) modelEl.value = tr.model;
-    var targetEl = $('#trTarget');
-    if (targetEl) targetEl.value = tr.target;
-
-    var sel = $('#trProvider');
-    var fields = $('#trLlmFields');
-    var syncFields = function () {
-      if (fields) fields.style.display = sel && sel.value === 'llm' ? '' : 'none';
-    };
-    syncFields();
-    if (sel) sel.addEventListener('change', function () { saveTransSettings(); syncFields(); });
-    ['#trKey', '#trBase', '#trModel', '#trTarget'].forEach(function (q) {
-      var el = $(q);
-      if (el) el.addEventListener('change', saveTransSettings);
     });
 
     var ncEl = $('#noteColor');
@@ -2718,10 +2774,72 @@
     var addBtn = $('#btnAddRule');
     if (addBtn) addBtn.addEventListener('click', addRule);
 
+    var keyEl = $('#trKey');
+    if (keyEl) keyEl.value = tr.apiKey;
+    var baseEl = $('#trBase');
+    if (baseEl) baseEl.value = tr.baseURL;
+    var modelEl = $('#trModel');
+    if (modelEl) modelEl.value = tr.model;
+    var targetEl = $('#trTarget');
+    if (targetEl) targetEl.value = tr.target;
+
+    var sel = $('#trProvider');
+    var fields = $('#trLlmFields');
+    var syncFields = function () {
+      if (fields) fields.style.display = sel && sel.value === 'llm' ? '' : 'none';
+    };
+    syncFields();
+    if (sel) sel.addEventListener('change', function () { saveTransSettings(); syncFields(); });
+    ['#trKey', '#trBase', '#trModel', '#trTarget'].forEach(function (q) {
+      var el = $(q);
+      if (el) el.addEventListener('change', saveTransSettings);
+    });
+
     var balBtn = $('#btnBalance');
     if (balBtn) balBtn.addEventListener('click', refreshBalance);
-    var guideBtn = $('#btnGuide');
-    if (guideBtn) guideBtn.addEventListener('click', openGuide);
+  }
+
+  function guideHtml() {
+    return [
+      '<div class="guide">',
+      '<p><b>CodeNotes</b> 是本地代码 / 文档注释工具：左侧目录、右侧正文，数据只存在本机。</p>',
+      '<h4>一、导入代码</h4>',
+      '<ul>',
+      '<li>顶栏 <b>上传图标</b> → 压缩包 / 文件夹</li>',
+      '<li>安卓的「文件夹」用系统目录选择器，保留完整的子目录结构</li>',
+      '<li>乱码、二进制文件也照原样显示（记事本模式），不跳过</li>',
+      '</ul>',
+      '<h4>二、注释</h4>',
+      '<ul>',
+      '<li>点任意一行 → 在右侧写注释 → 保存（或 Ctrl+Enter）</li>',
+      '<li>行尾会以「   # 注释」显示，可在「代码注释及高亮」里关掉或改颜色</li>',
+      '<li>文件夹行尾的铅笔可写目录注释，显示成「名称（注释）」</li>',
+      '<li>右上角 <b>导出</b> 可把注释导出成 Markdown</li>',
+      '</ul>',
+      '<h4>三、PDF</h4>',
+      '<ul>',
+      '<li>顶栏 <b>PDF 图标</b> → 选 PDF 文件或导入压缩包；项目里的 PDF 在左侧直接点开</li>',
+      '<li>连续滚动翻页，双指捏合缩放，放大后可以左右滑动，页码框输入数字可跳转</li>',
+      '<li><b>查找</b>：搜索 PDF 文字，用 ↑↓ 逐个跟踪命中位置</li>',
+      '<li><b>目录</b>：压缩包内其它 PDF、书签（可一键翻译书签标题）</li>',
+      '<li><b>译</b>：翻译当前页；完成后用「原文 / 译文」切换，A− / A+ 调字号，拖顶部手柄调面板高度</li>',
+      '</ul>',
+      '<h4>四、AI</h4>',
+      '<ul>',
+      '<li>在「PDF · AI 配置」里填 DeepSeek / OpenAI 兼容的 API Key（翻译质量优先），也可切免费 Google</li>',
+      '<li>「账户余额」点刷新即可查询当前 Key 的余额</li>',
+      '</ul>',
+      '<h4>五、数据</h4>',
+      '<ul>',
+      '<li>注释保存在本机，卸载应用会清空，重要内容请先导出</li>',
+      '<li>会自动记住上次打开的项目、PDF 和页码</li>',
+      '</ul>',
+      '</div>'
+    ].join('');
+  }
+
+  function openGuide() {
+    openSettings('guide');
   }
 
   async function refreshBalance() {
@@ -3181,6 +3299,7 @@
 
     $('#btnPdfOutline').addEventListener('click', function () { setPdfOutline(); });
     $('#poClose').addEventListener('click', function () { setPdfOutline(false); });
+    $('#poTranslate').addEventListener('click', translateOutline);
 
     $('#btnWelcomeImport').addEventListener('click', function () { $('#fileInput').click(); });
     $('#btnWelcomeDir').addEventListener('click', function () { pickFolder(); });
