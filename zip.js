@@ -7,8 +7,8 @@
   var SIG_EOCD = 0x06054b50;
   var SIG_CD = 0x02014b50;
   var SIG_LOCAL = 0x04034b50;
-  var MAX_FILE = 20 * 1024 * 1024;     // 单文件超过此大小不载入
-  var MAX_TOTAL = 60 * 1024 * 1024;    // 解压总量上限
+  var MAX_FILE = 40 * 1024 * 1024;     // 单文件超过此大小不载入（PDF 可到 40MB）
+  var MAX_TOTAL = 80 * 1024 * 1024;    // 解压总量上限
 
   var SKIP_PATHS = [
     /^__MACOSX(\/|$)/i,
@@ -49,6 +49,41 @@
       if (bytes[i] === 0) return true;
     }
     return false;
+  }
+
+  function byteEntropy(bytes) {
+    var n = Math.min(bytes.length, 4096);
+    if (!n) return 0;
+    var freq = new Array(256).fill(0);
+    for (var i = 0; i < n; i++) freq[bytes[i]]++;
+    var e = 0;
+    for (var j = 0; j < 256; j++) {
+      if (freq[j]) {
+        var p = freq[j] / n;
+        e -= p * Math.log2(p);
+      }
+    }
+    return e;
+  }
+
+  /**
+   * 加密文件 / 二进制 / 乱码内容 → 返回 true（导入时跳过）
+   */
+  function looksUnreadable(bytes) {
+    if (!bytes || !bytes.length) return true;
+    if (isBinary(bytes)) return true;
+    if (bytes.length > 256 && byteEntropy(bytes) > 7.4) return true;
+    var dec = decodeText(bytes.subarray(0, Math.min(bytes.length, 4096)));
+    var s = dec.text;
+    if (!s.length) return true;
+    var bad = 0;
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charCodeAt(i);
+      if (c === 0xFFFD) bad++;
+      else if (c < 0x20 && c !== 9 && c !== 10 && c !== 13) bad++;
+      else if (c >= 0xE000 && c <= 0xF8FF) bad++;
+    }
+    return bad / s.length > 0.02;
   }
 
   function decodeText(bytes) {
@@ -162,8 +197,8 @@
           skipped++; continue;                        // 不支持的压缩算法
         }
 
-        // 跳过体积较大的二进制（PDF 保留，用于阅读）
-        if (data.length > 512 * 1024 && isBinary(data) && !/\.pdf$/i.test(m.path)) {
+        // 跳过加密 / 二进制 / 乱码文件（PDF 保留，用于阅读）
+        if (!/\.pdf$/i.test(m.path) && looksUnreadable(data)) {
           skipped++;
           continue;
         }
@@ -218,6 +253,7 @@
     readAny: readAny,
     readZip: readZip,
     decodeText: decodeText,
-    isBinary: isBinary
+    isBinary: isBinary,
+    looksUnreadable: looksUnreadable
   };
 })(window);

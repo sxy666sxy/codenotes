@@ -675,9 +675,9 @@
     } else if (entry.size > 6 * 1024 * 1024) {
       state.binary = true;
       state.notice = '文件超过 6MB，暂不载入预览。你仍然可以为它写整体注释。';
-    } else if (ZipReader.isBinary(entry.data)) {
+    } else if (ZipReader.looksUnreadable(entry.data)) {
       state.binary = true;
-      state.notice = '这是二进制文件，无法作为文本预览。你仍然可以为它写整体注释。';
+      state.notice = '这个文件是加密内容 / 二进制 / 乱码，已跳过加载。你仍然可以为它写整体注释。';
     } else {
       var cached = state.project.textCache.get(path);
       if (cached) {
@@ -1304,7 +1304,7 @@
       $('#welcome').hidden = true;
       if (state.notesPanel) setNotesPanel(false);
       if (state.project) highlightRow(state.pdfPath || state.current);
-      requestAnimationFrame(function () { if (pdfState.doc) renderPdfPage(); });
+      requestAnimationFrame(function () { if (pdfState.doc) refreshVisiblePages(); });
     } else {
       if (state.current) {
         $('#editor').hidden = false;
@@ -1330,6 +1330,25 @@
   }
 
   /* ---------------- PDF ---------------- */
+  var pdfState = {
+    doc: null, name: '', scale: 1, fit: true,
+    baseW: 595, baseH: 842, pages: [],
+    observer: null, current: 1, previewScale: 0
+  };
+  var transCache = {};
+  (function loadTransCache() {
+    try { transCache = JSON.parse(localStorage.getItem('codenotes.trans.v1') || '{}') || {}; }
+    catch (e) { transCache = {}; }
+  })();
+
+  function clampNum(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+  function touchDist(t) {
+    var dx = t[0].clientX - t[1].clientX;
+    var dy = t[0].clientY - t[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy) || 1;
+  }
+
   function openPdfFromProject(path) {
     if (!state.project) return;
     var entry = state.project.byPath.get(path);
@@ -1353,11 +1372,13 @@
   async function openPdfData(data, name) {
     setTab('pdf');
     pdfState.name = name || 'PDF';
+    pdfState.current = 1;
+    pdfState.fit = true;
     $('#pdfName').textContent = pdfState.name;
     $('#pdfEmpty').hidden = true;
+    $('#pdfPages').innerHTML = '';
     $('#pdfPage').textContent = '…';
-    $('#pdfCanvas').style.width = '0px';
-    $('#pdfCanvas').style.height = '0px';
+    $('#pdfTrans').hidden = true;
 
     try {
       if (pdfState.doc) {
@@ -1368,82 +1389,386 @@
       var task = pdfjsLib.getDocument({ data: data, isEvalSupported: false });
       var doc = await task.promise;
       pdfState.doc = doc;
-      pdfState.page = 1;
-      pdfState.fit = true;
-      await renderPdfPage();
+      var first = await doc.getPage(1);
+      var vp1 = first.getViewport({ scale: 1 });
+      pdfState.baseW = vp1.width;
+      pdfState.baseH = vp1.height;
+      await buildPages();
     } catch (err) {
       console.error(err);
+      $('#pdfPages').innerHTML = '';
       $('#pdfEmpty').hidden = false;
-      $('#pdfCanvas').style.width = '0px';
-      $('#pdfCanvas').style.height = '0px';
       $('#pdfPage').textContent = '– / –';
       toast('PDF 打开失败：' + ((err && err.message) || '未知错误'));
     }
   }
 
-  async function renderPdfPage() {
-    var doc = pdfState.doc;
-    if (!doc) return;
-    var pageNo = Math.min(Math.max(1, pdfState.page), doc.numPages);
-    pdfState.page = pageNo;
-    var token = ++pdfState.token;
-
-    var page = await doc.getPage(pageNo);
-    if (token !== pdfState.token) return;
-
+  function fitScale() {
     var stage = $('#pdfStage');
-    var base = page.getViewport({ scale: 1 });
-    var scale;
-    if (pdfState.fit) {
-      var availW = Math.max(120, stage.clientWidth - 30);
-      var availH = Math.max(120, stage.clientHeight - 30);
-      scale = Math.min(availW / base.width, availH / base.height);
-    } else {
-      scale = pdfState.scale;
-    }
-    scale = Math.max(0.12, Math.min(scale, 6));
-
-    var vp = page.getViewport({ scale: scale });
-    var dpr = Math.min(window.devicePixelRatio || 1, 2);
-    var canvas = $('#pdfCanvas');
-    var ctx = canvas.getContext('2d');
-    canvas.width = Math.max(1, Math.floor(vp.width * dpr));
-    canvas.height = Math.max(1, Math.floor(vp.height * dpr));
-    canvas.style.width = vp.width + 'px';
-    canvas.style.height = vp.height + 'px';
-
-    await page.render({
-      canvasContext: ctx,
-      viewport: vp,
-      transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null
-    }).promise;
-
-    if (token !== pdfState.token) return;
-    pdfState.scale = scale;
-    $('#pdfPage').textContent = pageNo + ' / ' + doc.numPages;
-    $('#pdfName').textContent = pdfState.name;
-    $('#pdfEmpty').hidden = true;
+    var avail = Math.max(160, stage.clientWidth - 24);
+    return avail / pdfState.baseW;
   }
 
-  function pdfStep(dir) {
+  async function buildPages() {
+    var doc = pdfState.doc;
+    if (!doc) return;
+    var host = $('#pdfPages');
+    host.innerHTML = '';
+    pdfState.pages = [];
+    if (pdfState.observer) { pdfState.observer.disconnect(); pdfState.observer = null; }
+    if (pdfState.fit) pdfState.scale = fitScale();
+
+    for (var i = 1; i <= doc.numPages; i++) {
+      var wrap = document.createElement('div');
+      wrap.className = 'pdf-page';
+      wrap.dataset.page = i;
+      var canvas = document.createElement('canvas');
+      wrap.appendChild(canvas);
+      wrap.style.width = Math.round(pdfState.baseW * pdfState.scale) + 'px';
+      wrap.style.height = Math.round(pdfState.baseH * pdfState.scale) + 'px';
+      host.appendChild(wrap);
+      pdfState.pages.push({
+        no: i, wrap: wrap, canvas: canvas,
+        renderedScale: 0, rendering: false,
+        w: pdfState.baseW, h: pdfState.baseH, page: null
+      });
+    }
+
+    $('#pdfPage').textContent = '1 / ' + doc.numPages;
+    observePages();
+    renderPageAt(0);
+    renderPageAt(1);
+    var stage = $('#pdfStage');
+    if (stage) stage.scrollTop = 0;
+  }
+
+  function observePages() {
+    var stage = $('#pdfStage');
+    if (typeof IntersectionObserver === 'undefined') return;
+    pdfState.observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (!en.isIntersecting) return;
+        renderPageAt(Number(en.target.dataset.page) - 1);
+      });
+    }, { root: stage, rootMargin: '700px 0px' });
+    pdfState.pages.forEach(function (p) { pdfState.observer.observe(p.wrap); });
+  }
+
+  async function renderPageAt(idx) {
+    var p = pdfState.pages[idx];
+    if (!p || !pdfState.doc) return;
+    var s = pdfState.scale;
+    if (p.renderedScale === s || p.rendering) return;
+    p.rendering = true;
+    try {
+      var page = p.page || await pdfState.doc.getPage(p.no);
+      p.page = page;
+      if (Math.abs(pdfState.scale - s) > 0.001) return;
+      var vp = page.getViewport({ scale: s });
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      var canvas = p.canvas;
+      canvas.width = Math.max(1, Math.floor(vp.width * dpr));
+      canvas.height = Math.max(1, Math.floor(vp.height * dpr));
+      canvas.style.width = vp.width + 'px';
+      canvas.style.height = vp.height + 'px';
+      await page.render({
+        canvasContext: canvas.getContext('2d'),
+        viewport: vp,
+        transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null
+      }).promise;
+      if (Math.abs(pdfState.scale - s) > 0.001) return;
+      p.renderedScale = s;
+      p.w = vp.width / s;
+      p.h = vp.height / s;
+      p.wrap.style.width = vp.width + 'px';
+      p.wrap.style.height = vp.height + 'px';
+    } catch (e) {
+      console.warn('render page failed', p.no, e);
+    } finally {
+      p.rendering = false;
+    }
+  }
+
+  function applyScale() {
+    pdfState.pages.forEach(function (p) {
+      p.wrap.style.width = Math.round(p.w * pdfState.scale) + 'px';
+      p.wrap.style.height = Math.round(p.h * pdfState.scale) + 'px';
+      p.renderedScale = 0;
+    });
+    refreshVisiblePages();
+  }
+
+  function refreshVisiblePages() {
     if (!pdfState.doc) return;
-    var next = pdfState.page + dir;
-    if (next < 1 || next > pdfState.doc.numPages) return;
-    pdfState.page = next;
-    renderPdfPage();
+    var stage = $('#pdfStage');
+    var rect = stage.getBoundingClientRect();
+    pdfState.pages.forEach(function (p, i) {
+      var r = p.wrap.getBoundingClientRect();
+      if (r.bottom >= rect.top - 700 && r.top <= rect.bottom + 700) renderPageAt(i);
+    });
+  }
+
+  function onPdfScroll() {
+    if (!pdfState.doc || !pdfState.pages.length) return;
+    var stage = $('#pdfStage');
+    var mid = stage.scrollTop + stage.clientHeight * 0.3;
+    var best = 1;
+    for (var i = 0; i < pdfState.pages.length; i++) {
+      var p = pdfState.pages[i];
+      if (p.wrap.offsetTop <= mid) best = p.no;
+      else break;
+    }
+    pdfState.current = best;
+    $('#pdfPage').textContent = best + ' / ' + pdfState.doc.numPages;
   }
 
   function pdfZoom(dir) {
     if (!pdfState.doc) return;
     pdfState.fit = false;
-    pdfState.scale = pdfState.scale * (dir > 0 ? 1.25 : 0.8);
-    renderPdfPage();
+    pdfState.scale = clampNum(pdfState.scale * (dir > 0 ? 1.2 : 0.8), 0.2, 6);
+    applyScale();
   }
 
   function pdfFit() {
     if (!pdfState.doc) return;
     pdfState.fit = true;
-    renderPdfPage();
+    pdfState.scale = fitScale();
+    applyScale();
+  }
+
+  /* ---------------- PDF 手势：双指缩放 ---------------- */
+  var pinch = null;
+  function bindPdfGestures() {
+    var stage = $('#pdfStage');
+    if (!stage) return;
+
+    stage.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 2) return;
+      var pages = $('#pdfPages');
+      pinch = { d: touchDist(e.touches), s: pdfState.scale };
+      var r = stage.getBoundingClientRect();
+      var cx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - r.left;
+      var cy = (e.touches[0].clientY + e.touches[1].clientY) / 2 - r.top + stage.scrollTop;
+      pages.style.transformOrigin = cx + 'px ' + cy + 'px';
+    }, { passive: true });
+
+    stage.addEventListener('touchmove', function (e) {
+      if (!pinch || e.touches.length !== 2) return;
+      e.preventDefault();
+      var ratio = touchDist(e.touches) / pinch.d;
+      var s = clampNum(pinch.s * ratio, 0.2, 6);
+      pdfState.previewScale = s;
+      $('#pdfPages').style.transform = 'scale(' + (s / pinch.s) + ')';
+    }, { passive: false });
+
+    stage.addEventListener('touchend', function (e) {
+      if (!pinch || e.touches.length >= 2) return;
+      var s = pdfState.previewScale || pinch.s;
+      pinch = null;
+      var pages = $('#pdfPages');
+      pages.style.transform = '';
+      pages.style.transformOrigin = '';
+      pdfState.fit = false;
+      pdfState.scale = s;
+      pdfState.previewScale = 0;
+      applyScale();
+      onPdfScroll();
+    });
+
+    stage.addEventListener('wheel', function (e) {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      pdfZoom(e.deltaY < 0 ? 1 : -1);
+    }, { passive: false });
+  }
+
+  /* ---------------- PDF 翻译 ---------------- */
+  function getTransCfg() {
+    var t = store.settings.translate || {};
+    return {
+      provider: t.provider || 'llm',
+      baseURL: t.baseURL || 'https://api.deepseek.com/v1',
+      model: t.model || 'deepseek-chat',
+      apiKey: t.apiKey || '',
+      target: t.target || '简体中文'
+    };
+  }
+
+  function transKeyOf(no) {
+    var c = getTransCfg();
+    return pdfState.name + '#' + no + '#' + c.provider + '#' + c.model + '#' + c.target;
+  }
+
+  function saveTransCache() {
+    var keys = Object.keys(transCache);
+    if (keys.length > 120) {
+      keys.slice(0, keys.length - 120).forEach(function (k) { delete transCache[k]; });
+    }
+    try { localStorage.setItem('codenotes.trans.v1', JSON.stringify(transCache)); } catch (e) { /* 满了就算了 */ }
+  }
+
+  async function extractPageText(page) {
+    var content = await page.getTextContent();
+    var items = (content.items || []).filter(function (it) { return it.str && it.str.trim(); });
+    items.sort(function (a, b) {
+      var ya = Math.round(a.transform[5]);
+      var yb = Math.round(b.transform[5]);
+      if (Math.abs(ya - yb) > 2) return yb - ya;
+      return a.transform[4] - b.transform[4];
+    });
+    var lines = [];
+    var lastY = null;
+    items.forEach(function (it) {
+      var y = Math.round(it.transform[5]);
+      if (lastY === null || Math.abs(y - lastY) > 2) {
+        lines.push(it.str);
+      } else {
+        var prev = lines[lines.length - 1];
+        var needSpace = /[A-Za-z0-9,.;:)\]"'%]$/.test(prev) && /^[A-Za-z0-9(\["']/.test(it.str);
+        lines[lines.length - 1] = prev + (needSpace ? ' ' : '') + it.str;
+      }
+      lastY = y;
+    });
+    return lines.join('\n');
+  }
+
+  function chunkText(text, size) {
+    var lines = String(text).split('\n');
+    var chunks = [];
+    var cur = '';
+    lines.forEach(function (ln) {
+      while (ln.length > size) {
+        if (cur) { chunks.push(cur); cur = ''; }
+        chunks.push(ln.slice(0, size));
+        ln = ln.slice(size);
+      }
+      if ((cur ? cur.length + 1 : 0) + ln.length > size && cur) {
+        chunks.push(cur);
+        cur = ln;
+      } else {
+        cur = cur ? cur + '\n' + ln : ln;
+      }
+    });
+    if (cur) chunks.push(cur);
+    return chunks;
+  }
+
+  async function translateLong(text) {
+    var parts = chunkText(text, 1200);
+    var out = [];
+    for (var i = 0; i < parts.length; i++) {
+      if (parts.length > 1) {
+        $('#ptBody').innerHTML = '<div class="pt-loading"><span class="spinner sm"></span>正在翻译 ' +
+          (i + 1) + ' / ' + parts.length + '…</div>';
+      }
+      out.push(await translateChunk(parts[i]));
+    }
+    return out.join('\n\n');
+  }
+
+  async function translateChunk(text) {
+    var cfg = getTransCfg();
+    if (cfg.provider === 'google') return translateGoogle(text, cfg);
+    return translateLLM(text, cfg);
+  }
+
+  async function translateGoogle(text, cfg) {
+    var tl = /中文|zh/i.test(cfg.target) ? 'zh-CN' : 'en';
+    var url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=' + tl +
+      '&dt=t&q=' + encodeURIComponent(text);
+    var r = await fetch(url);
+    if (!r.ok) throw new Error('翻译服务返回 ' + r.status + '（国内网络可能访问不了 Google，改用 DeepSeek）');
+    var data = await r.json();
+    if (!data || !data[0]) throw new Error('翻译结果解析失败');
+    return data[0].map(function (seg) { return seg[0]; }).join('');
+  }
+
+  async function translateLLM(text, cfg) {
+    if (!cfg.apiKey) throw new Error('还没有填 API Key。点「翻译设置」填写 DeepSeek Key（platform.deepseek.com 申请），或把服务改成免费 Google');
+    var base = String(cfg.baseURL || '').replace(/\/+$/, '');
+    if (!base) throw new Error('接口地址为空');
+    var r = await fetch(base + '/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + cfg.apiKey
+      },
+      body: JSON.stringify({
+        model: cfg.model || 'deepseek-chat',
+        temperature: 0.2,
+        messages: [
+          {
+            role: 'system',
+            content: '你是专业的技术文档翻译。把用户提供的文本翻译成' + cfg.target +
+              '。要求：忠实原文、术语准确、语句通顺；保留段落与换行；只输出译文，不要解释、不要附原文。'
+          },
+          { role: 'user', content: text }
+        ]
+      })
+    });
+    if (!r.ok) {
+      var msg = '请求失败 ' + r.status;
+      try {
+        var j = await r.json();
+        if (j && j.error && j.error.message) msg += '：' + j.error.message;
+      } catch (e) { /* 忽略 */ }
+      throw new Error(msg);
+    }
+    var data = await r.json();
+    var out = data && data.choices && data.choices[0] && data.choices[0].message &&
+      data.choices[0].message.content;
+    if (!out) throw new Error('返回内容为空');
+    return String(out).trim();
+  }
+
+  async function translateCurrentPage() {
+    if (!pdfState.doc) { toast('先打开一个 PDF'); return; }
+    var no = pdfState.current || 1;
+    $('#pdfTrans').hidden = false;
+    $('#ptTitle').textContent = '翻译 · 第 ' + no + ' 页';
+    var body = $('#ptBody');
+
+    var key = transKeyOf(no);
+    if (transCache[key]) {
+      body.textContent = transCache[key];
+      return;
+    }
+
+    body.innerHTML = '<div class="pt-loading"><span class="spinner sm"></span>正在提取文字…</div>';
+    try {
+      var page = await pdfState.doc.getPage(no);
+      var text = await extractPageText(page);
+      if (!text.trim()) {
+        body.innerHTML = '<p class="pt-hint">这一页提取不到文字，可能是扫描件/图片型 PDF，暂时无法翻译。</p>';
+        return;
+      }
+      body.innerHTML = '<div class="pt-loading"><span class="spinner sm"></span>正在翻译（' +
+        text.length + ' 字符）…</div>';
+      var out = await translateLong(text);
+      transCache[key] = out;
+      saveTransCache();
+      body.textContent = out;
+    } catch (err) {
+      console.error(err);
+      body.innerHTML = '';
+      var p = document.createElement('p');
+      p.className = 'pt-hint';
+      p.textContent = '翻译失败：' + ((err && err.message) || '未知错误');
+      body.appendChild(p);
+      var actions = document.createElement('div');
+      actions.className = 'pt-actions';
+      var retry = document.createElement('button');
+      retry.className = 'btn sm';
+      retry.textContent = '重试';
+      retry.addEventListener('click', translateCurrentPage);
+      actions.appendChild(retry);
+      var cfgBtn = document.createElement('button');
+      cfgBtn.className = 'btn sm';
+      cfgBtn.textContent = '翻译设置';
+      cfgBtn.addEventListener('click', openSettings);
+      actions.appendChild(cfgBtn);
+      body.appendChild(actions);
+    }
   }
 
   /* ---------------- 直接选文件夹 ---------------- */
@@ -1490,6 +1815,7 @@
         if (isSkippedPath(f.p)) { skipped++; continue; }
         var bytes = base64ToBytes(f.d);
         if (!bytes.length) { skipped++; continue; }
+        if (!/\.pdf$/i.test(f.p) && ZipReader.looksUnreadable(bytes)) { skipped++; continue; }
         entries.push({ path: f.p, size: bytes.length, data: bytes });
         if (i % 20 === 0) busy('正在解析… ' + (i + 1) + ' / ' + list.length);
       }
@@ -1520,10 +1846,11 @@
         var rel = f.webkitRelativePath || f.name;
         var path = rel.indexOf('/') >= 0 ? rel.split('/').slice(1).join('/') : rel;
         if (!path) continue;
-        if (isSkippedPath(path) || f.size > 20 * 1024 * 1024) { skipped++; continue; }
-        if (total + f.size > 160 * 1024 * 1024) { skipped++; continue; }
+        if (isSkippedPath(path) || f.size > 40 * 1024 * 1024) { skipped++; continue; }
+        if (total + f.size > 80 * 1024 * 1024) { skipped++; continue; }
 
         var data = new Uint8Array(await f.arrayBuffer());
+        if (!/\.pdf$/i.test(path) && ZipReader.looksUnreadable(data)) { skipped++; continue; }
         total += data.length;
         entries.push({ path: path, size: data.length, data: data });
         if (i % 6 === 0) busy('正在读取… ' + (i + 1) + ' / ' + files.length);
@@ -1572,11 +1899,24 @@
     document.body.classList.toggle('no-tree-notes', !tree);
   }
 
+  function saveTransSettings() {
+    var get = function (sel, dflt) { var el = $(sel); return el ? el.value : dflt; };
+    store.settings.translate = {
+      provider: get('#trProvider', 'llm') || 'llm',
+      apiKey: get('#trKey', ''),
+      baseURL: get('#trBase', ''),
+      model: get('#trModel', ''),
+      target: get('#trTarget', '简体中文')
+    };
+    saveStore();
+  }
+
   function openSettings() {
     var inline = store.settings.inlineNotes !== false;
     var tree = store.settings.treeNotes !== false;
+    var tr = getTransCfg();
 
-    openModal('显示设置', [
+    openModal('设置', [
       '<div class="set-list">',
       '<div class="set-row"><div class="set-text"><b>行尾显示行注释</b>' +
       '<span>在每行代码后面显示「   # 注释」，即 3 个空格 + #。关闭后注释仍保留，只是不显示。</span></div>',
@@ -1584,7 +1924,19 @@
       '<div class="set-row"><div class="set-text"><b>目录名称后显示注释</b>' +
       '<span>在左侧文件和文件夹名称后显示「（注释）」。注释是单独保存的，不会写进源码。</span></div>',
       '<button class="switch" role="switch" data-key="treeNotes" aria-checked="' + tree + '"><i></i></button></div>',
-      '</div>'
+      '</div>',
+      '<div class="set-sep">PDF 翻译</div>',
+      '<label class="set-field">翻译服务',
+      '<select id="trProvider">',
+      '<option value="llm"' + (tr.provider === 'llm' ? ' selected' : '') + '>DeepSeek / OpenAI 兼容（质量最好，需 Key）</option>',
+      '<option value="google"' + (tr.provider === 'google' ? ' selected' : '') + '>免费 Google（无需 Key，国内可能连不上）</option>',
+      '</select></label>',
+      '<div id="trLlmFields">',
+      '<label class="set-field">API Key<input id="trKey" type="password" autocomplete="off" placeholder="sk-..."></label>',
+      '<label class="set-field">接口地址<input id="trBase" autocomplete="off" placeholder="https://api.deepseek.com/v1"></label>',
+      '<label class="set-field">模型<input id="trModel" autocomplete="off" placeholder="deepseek-chat"></label>',
+      '</div>',
+      '<label class="set-field">目标语言<input id="trTarget" autocomplete="off" placeholder="简体中文"></label>'
     ].join(''), [{ label: '完成', primary: true, onClick: closeModal }]);
 
     $$('#modalBody .switch').forEach(function (btn) {
@@ -1596,6 +1948,27 @@
         saveStore();
         applyDisplaySettings();
       });
+    });
+
+    var keyEl = $('#trKey');
+    if (keyEl) keyEl.value = tr.apiKey;
+    var baseEl = $('#trBase');
+    if (baseEl) baseEl.value = tr.baseURL;
+    var modelEl = $('#trModel');
+    if (modelEl) modelEl.value = tr.model;
+    var targetEl = $('#trTarget');
+    if (targetEl) targetEl.value = tr.target;
+
+    var sel = $('#trProvider');
+    var fields = $('#trLlmFields');
+    var syncFields = function () {
+      if (fields) fields.style.display = sel && sel.value === 'llm' ? '' : 'none';
+    };
+    syncFields();
+    if (sel) sel.addEventListener('change', function () { saveTransSettings(); syncFields(); });
+    ['#trKey', '#trBase', '#trModel', '#trTarget'].forEach(function (q) {
+      var el = $(q);
+      if (el) el.addEventListener('change', saveTransSettings);
     });
   }
 
@@ -1971,11 +2344,13 @@
       e.target.value = '';
       if (f) openPdfFile(f);
     });
-    $('#pdfPrev').addEventListener('click', function () { pdfStep(-1); });
-    $('#pdfNext').addEventListener('click', function () { pdfStep(1); });
     $('#pdfZoomIn').addEventListener('click', function () { pdfZoom(1); });
     $('#pdfZoomOut').addEventListener('click', function () { pdfZoom(-1); });
     $('#pdfFit').addEventListener('click', function () { pdfFit(); });
+    $('#btnTranslate').addEventListener('click', translateCurrentPage);
+    $('#ptClose').addEventListener('click', function () { $('#pdfTrans').hidden = true; });
+    $('#pdfStage').addEventListener('scroll', onPdfScroll, { passive: true });
+    bindPdfGestures();
 
     $('#btnEdit').addEventListener('click', toggleEdit);
     $('#fileMeta').addEventListener('click', function (e) {
@@ -2155,7 +2530,7 @@
         }
         if (!m) document.body.classList.remove('scrim-on');
         updateScrim();
-        if (pdfState.doc && pdfState.fit) renderPdfPage();
+        if (pdfState.doc && pdfState.fit) { pdfState.scale = fitScale(); applyScale(); }
       }, 150);
     });
 

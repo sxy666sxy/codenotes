@@ -181,21 +181,27 @@
           </button>
           <span class="pdf-name" id="pdfName">未打开文件</span>
           <span class="grow"></span>
-          <button class="icon-btn sm" id="pdfPrev" title="上一页"><svg class="ico sm"><use href="#i-left"/></svg></button>
           <span class="pdf-page" id="pdfPage">– / –</span>
-          <button class="icon-btn sm" id="pdfNext" title="下一页"><svg class="ico sm"><use href="#i-right"/></svg></button>
           <button class="icon-btn sm" id="pdfZoomOut" title="缩小"><svg class="ico sm"><use href="#i-minus"/></svg></button>
           <button class="icon-btn sm" id="pdfZoomIn" title="放大"><svg class="ico sm"><use href="#i-plus"/></svg></button>
-          <button class="chip" id="pdfFit" title="适应窗口">适应</button>
+          <button class="chip" id="pdfFit" title="适应宽度">适应</button>
+          <button class="chip" id="btnTranslate" title="翻译当前页">译</button>
         </div>
         <div class="pdf-stage" id="pdfStage">
-          <canvas id="pdfCanvas"></canvas>
+          <div class="pdf-pages" id="pdfPages"></div>
           <div class="pdf-empty" id="pdfEmpty">
             <svg class="ico big"><use href="#i-pdf"/></svg>
             <p class="pe-title">还没有打开 PDF</p>
             <p class="pe-hint">点「打开 PDF」选择文件；<br>压缩包 / 文件夹里如果有 PDF，在左侧直接点开也行</p>
           </div>
         </div>
+        <aside class="pdf-trans" id="pdfTrans" hidden>
+          <div class="pt-head">
+            <b id="ptTitle">翻译 · 第 1 页</b>
+            <button class="icon-btn sm" id="ptClose" aria-label="关闭翻译"><svg class="ico sm"><use href="#i-x"/></svg></button>
+          </div>
+          <div class="pt-body" id="ptBody"></div>
+        </aside>
       </section>
 
       <aside class="notes-panel" id="notesPanel">

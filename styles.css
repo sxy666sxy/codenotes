@@ -738,15 +738,44 @@ body.no-inline-notes .inline-note { display: none; }
   font-variant-numeric: tabular-nums;
 }
 .pdf-bar .grow { flex: 1; min-width: 4px; }
+.pdf-view { position: relative; }
 .pdf-stage {
-  flex: 1; overflow: auto; display: flex; align-items: flex-start; justify-content: center;
-  padding: 14px; background: var(--pdf-bg);
+  flex: 1; overflow: auto; background: var(--pdf-bg);
+  padding: 12px; position: relative;
+  touch-action: pan-y; overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
-.pdf-stage canvas {
-  background: #fff; border-radius: 2px;
+.pdf-pages {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  will-change: transform;
+}
+.pdf-page {
+  position: relative; background: #fff; border-radius: 2px; overflow: hidden;
   box-shadow: 0 8px 28px rgba(0, 0, 0, .28);
-  max-width: 100%;
+  flex: none;
 }
+.pdf-page canvas { display: block; width: 100%; height: 100%; }
+.pdf-trans {
+  position: absolute; top: 43px; right: 0; bottom: 0;
+  width: min(370px, 88vw);
+  display: flex; flex-direction: column;
+  background: var(--panel); border-left: 1px solid var(--line);
+  box-shadow: -10px 0 28px rgba(0, 0, 0, .14);
+  z-index: 15;
+}
+.pt-head {
+  flex: none; display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 8px 8px 14px; border-bottom: 1px solid var(--line-2);
+}
+.pt-head b { font-size: 12.5px; }
+.pt-body {
+  flex: 1; overflow-y: auto; padding: 12px 14px calc(20px + var(--inset-bottom));
+  font-size: 13px; line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.pt-loading { color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 8px; }
+.pt-hint { color: var(--muted); font-size: 12px; line-height: 1.8; }
+.pt-actions { display: flex; gap: 8px; margin-top: 12px; }
+.pt-body .btn.sm { height: 30px; }
 .pdf-empty {
   margin: auto; display: flex; flex-direction: column; align-items: center; gap: 7px;
   color: var(--muted); text-align: center; padding: 40px 20px;
@@ -761,8 +790,14 @@ body.tab-pdf .notes-panel { display: none !important; }
 
 @media (max-width: 880px) {
   .pdf-bar { padding: 6px 8px; }
-  .pdf-name { max-width: 24vw; }
+  .pdf-name { max-width: 22vw; }
   .pdf-stage { padding: 10px; }
+  .pdf-trans {
+    position: fixed; left: 0; right: 0; bottom: 0; top: auto;
+    width: auto; max-height: 58dvh;
+    border-left: 0; border-top: 1px solid var(--line);
+    border-radius: 14px 14px 0 0; z-index: 66;
+  }
 }
 
 @media (min-width: 881px) {
@@ -777,3 +812,22 @@ body.tab-pdf .notes-panel { display: none !important; }
   background: #b42318; color: #fff; font-size: 11.5px; line-height: 1.5;
   box-shadow: var(--shadow); cursor: pointer;
 }
+
+
+/* ---------------- 翻译设置 ---------------- */
+.set-sep {
+  margin: 16px 0 2px; padding-top: 10px;
+  border-top: 1px solid var(--line-2);
+  font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: .3px;
+}
+.set-field { display: flex; flex-direction: column; gap: 5px; padding: 7px 2px; font-size: 11.5px; color: var(--muted); }
+.set-field input, .set-field select {
+  height: 34px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel-2); color: var(--text);
+  font: 12.5px var(--font-ui); outline: 0;
+  width: 100%;
+}
+.set-field input:focus, .set-field select:focus { border-color: var(--accent); }
+
+.spinner.sm { width: 15px; height: 15px; border-width: 2px; }
