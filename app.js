@@ -1330,7 +1330,8 @@
   var pdfState = {
     doc: null, name: '', scale: 1, fit: true,
     baseW: 595, baseH: 842, pages: [],
-    observer: null, current: 1, previewScale: 0
+    observer: null, current: 1, previewScale: 0,
+    zipPdfs: [], lastData: null
   };
   var transCache = {};
   (function loadTransCache() {
@@ -1351,6 +1352,7 @@
     var entry = state.project.byPath.get(path);
     if (!entry) return;
     state.pdfPath = path;
+    pdfState.zipPdfs = [];
     highlightRow(path);
     if (isMobile()) setSidebar(false, false);
     openPdfData(new Uint8Array(entry.data), path.split('/').pop());
@@ -1358,12 +1360,34 @@
 
   function openPdfFile(file) {
     if (!file) return;
+    pdfState.zipPdfs = [];
     busy('正在打开 PDF…');
     file.arrayBuffer().then(function (buf) {
       openPdfData(new Uint8Array(buf), file.name);
     }).catch(function () {
       toast('读取 PDF 失败');
     }).then(function () { idle(); });
+  }
+
+  async function importPdfZip(file) {
+    if (!file) return;
+    busy('正在读取压缩包…');
+    try {
+      var res = await ZipReader.readZip(file, function (i, t) { busy('正在解压… ' + i + ' / ' + t); });
+      var pdfs = res.entries.filter(function (e) { return /\.pdf$/i.test(e.path); });
+      if (!pdfs.length) throw new Error('压缩包里没有 PDF 文件');
+      pdfState.zipPdfs = pdfs.map(function (e) {
+        return { name: e.path.split('/').pop(), path: e.path, data: new Uint8Array(e.data) };
+      });
+      await openPdfData(new Uint8Array(pdfs[0].data), pdfs[0].path.split('/').pop());
+      setPdfOutline(true);
+      if (pdfs.length > 1) toast('压缩包里有 ' + pdfs.length + ' 个 PDF，右侧目录可切换');
+    } catch (err) {
+      console.error(err);
+      toast((err && err.message) || '导入 PDF 失败');
+    } finally {
+      idle();
+    }
   }
 
   async function openPdfData(data, name) {
@@ -1383,6 +1407,9 @@
         pdfState.doc = null;
       }
       if (typeof pdfjsLib === 'undefined') throw new Error('PDF 引擎没有加载');
+      // pdf.js 会接管这块内存，先留一份用于“下次自动打开”
+      try { pdfState.lastData = new Uint8Array(data); } catch (e) { pdfState.lastData = null; }
+
       var task = pdfjsLib.getDocument({ data: data, isEvalSupported: false });
       var doc = await task.promise;
       pdfState.doc = doc;
@@ -1395,6 +1422,8 @@
       pdfState.baseW = vp1.width;
       pdfState.baseH = vp1.height;
       await buildPages();
+      buildOutline();
+      savePdfSession();
     } catch (err) {
       console.error(err);
       $('#pdfPages').innerHTML = '';
@@ -1534,6 +1563,7 @@
     }
     pdfState.current = best;
     $('#pdfPage').textContent = best + ' / ' + pdfState.doc.numPages;
+    savePdfSession();
   }
 
   function pdfZoom(dir) {
@@ -1550,29 +1580,205 @@
     applyScale();
   }
 
+  /* ---------------- PDF 目录 / 跳页 ---------------- */
+  function goToPage(n) {
+    if (!pdfState.doc) return;
+    n = Math.max(1, Math.min(n, pdfState.pages.length));
+    var p = pdfState.pages[n - 1];
+    if (!p) return;
+    var stage = $('#pdfStage');
+    stage.scrollTop = p.wrap.offsetTop - 6;
+    pdfState.current = n;
+    $('#pdfPage').textContent = n + ' / ' + pdfState.doc.numPages;
+    renderPageAt(n - 1);
+    onPdfScroll();
+  }
+
+  function setPdfOutline(open) {
+    var panel = $('#pdfOutline');
+    var willOpen = typeof open === 'boolean' ? open : panel.hidden;
+    panel.hidden = !willOpen;
+    if (willOpen) buildOutline();
+  }
+
+  function poSection(title, node) {
+    var sec = document.createElement('div');
+    sec.className = 'po-sec';
+    var t = document.createElement('div');
+    t.className = 'po-title';
+    t.textContent = title;
+    sec.appendChild(t);
+    sec.appendChild(node);
+    return sec;
+  }
+
+  var outlineSeq = 0;
+  async function buildOutline() {
+    var body = $('#poBody');
+    if (!body || !pdfState.doc) return;
+    var token = ++outlineSeq;
+    body.innerHTML = '';
+
+    // 压缩包里的其它 PDF
+    if (pdfState.zipPdfs && pdfState.zipPdfs.length > 1) {
+      var list = document.createElement('div');
+      pdfState.zipPdfs.forEach(function (item) {
+        var btn = document.createElement('button');
+        btn.className = 'po-item' + (item.name === pdfState.name ? ' on' : '');
+        btn.textContent = item.name;
+        btn.title = item.name;
+        btn.addEventListener('click', function () {
+          openPdfData(new Uint8Array(item.data), item.name);
+        });
+        list.appendChild(btn);
+      });
+      body.appendChild(poSection('压缩包内的 PDF', list));
+    }
+
+    var outline = null;
+    try { outline = await pdfState.doc.getOutline(); } catch (e) { outline = null; }
+    if (token !== outlineSeq) return;
+    if (outline && outline.length) {
+      var list2 = document.createElement('div');
+      (function add(items, depth) {
+        items.forEach(function (it) {
+          var btn = document.createElement('button');
+          btn.className = 'po-item';
+          btn.style.paddingLeft = (8 + depth * 12) + 'px';
+          btn.textContent = it.title || '(未命名)';
+          btn.title = it.title || '';
+          btn.addEventListener('click', function () { jumpToDest(it.dest); });
+          list2.appendChild(btn);
+          if (it.items && it.items.length) add(it.items, depth + 1);
+        });
+      })(outline, 0);
+      body.appendChild(poSection('书签', list2));
+    }
+
+    var pages = document.createElement('div');
+    pages.className = 'po-pages';
+    for (var i = 1; i <= pdfState.doc.numPages; i++) {
+      (function (n) {
+        var b = document.createElement('button');
+        b.className = 'po-page' + (n === pdfState.current ? ' on' : '');
+        b.textContent = String(n);
+        b.addEventListener('click', function () {
+          goToPage(n);
+          setPdfOutline(false);
+        });
+        pages.appendChild(b);
+      })(i);
+    }
+    body.appendChild(poSection('页面（点数字跳转）', pages));
+  }
+
+  async function jumpToDest(dest) {
+    try {
+      var d = typeof dest === 'string' ? await pdfState.doc.getDestination(dest) : dest;
+      if (!d || !d[0]) return;
+      var idx = await pdfState.doc.getPageIndex(d[0]);
+      goToPage(idx + 1);
+      if (isMobile()) setPdfOutline(false);
+    } catch (e) {
+      console.warn('jump failed', e);
+    }
+  }
+
+  /* ---------------- PDF 会话记忆 ---------------- */
+  function savePdfSession() {
+    if (!pdfState.doc) return;
+    clearTimeout(savePdfSession._t);
+    savePdfSession._t = setTimeout(function () {
+      try {
+        idbPut('lastPdf', {
+          name: pdfState.name,
+          page: pdfState.current,
+          tab: state.tab,
+          at: Date.now(),
+          data: pdfState.lastData || null
+        }).catch(function () { /* 存不下就算了 */ });
+      } catch (e) { /* 忽略 */ }
+    }, 700);
+  }
+
+  function restorePdfSession() {
+    idbGet('lastPdf').then(function (rec) {
+      if (!rec || !rec.data) return;
+      if (rec.tab && rec.tab !== 'pdf') {
+        // 上次停在代码页：只把 PDF 放好，不打扰
+        return;
+      }
+      openPdfData(new Uint8Array(rec.data), rec.name).then(function () {
+        if (rec.page && rec.page > 1) goToPage(rec.page);
+      });
+    }).catch(function () { /* 忽略 */ });
+  }
+
   /* ---------------- PDF 译文覆盖 ---------------- */
+  function clearTransOverlays() {
+    pdfState.pages.forEach(function (p) {
+      var olds = p.wrap.querySelectorAll('.pdf-trans-overlay, .pdf-tr-block');
+      Array.prototype.forEach.call(olds, function (el) { el.remove(); });
+    });
+  }
+
   function renderTransOverlays() {
     if (!pdfState.pages) return;
+    clearTransOverlays();
+    if (!pdfState.showTrans) return;
+
+    var s = pdfState.scale;
     pdfState.pages.forEach(function (p) {
-      var old = p.wrap.querySelector('.pdf-trans-overlay');
-      if (old) old.remove();
-      if (!pdfState.showTrans) return;
+      var t = pdfState.trans[p.no];
 
-      var div = document.createElement('div');
-      div.className = 'pdf-trans-overlay';
-      var w = p.wrap.clientWidth || 400;
-      div.style.fontSize = Math.max(9, Math.round(w / 46)) + 'px';
-
-      var text = pdfState.trans[p.no];
-      if (text) {
-        div.textContent = text;
-      } else {
+      // 没有译文：提示层
+      if (!t) {
         var hint = document.createElement('div');
-        hint.className = 't-empty';
-        hint.textContent = '（第 ' + p.no + ' 页还没有翻译，滚到这一页后点「译」）';
-        div.appendChild(hint);
+        hint.className = 'pdf-trans-overlay';
+        hint.style.fontSize = Math.max(10, Math.round((p.wrap.clientWidth || 400) / 46)) + 'px';
+        var tip = document.createElement('div');
+        tip.className = 't-empty';
+        tip.textContent = '（第 ' + p.no + ' 页还没有翻译，滚到这一页后点「译」）';
+        hint.appendChild(tip);
+        p.wrap.appendChild(hint);
+        return;
       }
-      p.wrap.appendChild(div);
+
+      // 逐块覆盖，保持原版式
+      if (t.blocks && t.blocks.length) {
+        t.blocks.forEach(function (b) {
+          if (!b.trans) return;
+          var el = document.createElement('div');
+          el.className = 'pdf-tr-block';
+          el.style.left = (b.x * s) + 'px';
+          el.style.top = (b.y * s) + 'px';
+          el.style.width = Math.max(16, b.w * s + 2) + 'px';
+          el.style.height = Math.max(7, b.h * s + 1) + 'px';
+          var fs = Math.max(3.2, (b.h * s / Math.max(1, b.lineCount || 1)) * 0.74);
+          el.style.fontSize = fs + 'px';
+          el.textContent = b.trans;
+          p.wrap.appendChild(el);
+        });
+        // 放不下就缩小字号
+        var blocks = p.wrap.querySelectorAll('.pdf-tr-block');
+        Array.prototype.forEach.call(blocks, function (el) {
+          var fs = parseFloat(el.style.fontSize) || 9;
+          for (var k = 0; k < 7 && el.scrollHeight > el.clientHeight + 1 && fs > 3; k++) {
+            fs *= 0.86;
+            el.style.fontSize = fs + 'px';
+          }
+        });
+        return;
+      }
+
+      // 兜底：整页覆盖
+      if (t.text) {
+        var div = document.createElement('div');
+        div.className = 'pdf-trans-overlay';
+        div.style.fontSize = Math.max(9, Math.round((p.wrap.clientWidth || 400) / 46)) + 'px';
+        div.textContent = t.text;
+        p.wrap.appendChild(div);
+      }
     });
   }
 
@@ -1687,29 +1893,109 @@
     try { localStorage.setItem('codenotes.trans.v1', JSON.stringify(transCache)); } catch (e) { /* 满了就算了 */ }
   }
 
-  async function extractPageText(page) {
+  async function extractBlocks(page) {
+    var vp = page.getViewport({ scale: 1 });
     var content = await page.getTextContent();
-    var items = (content.items || []).filter(function (it) { return it.str && it.str.trim(); });
-    items.sort(function (a, b) {
-      var ya = Math.round(a.transform[5]);
-      var yb = Math.round(b.transform[5]);
-      if (Math.abs(ya - yb) > 2) return yb - ya;
-      return a.transform[4] - b.transform[4];
+    var items = [];
+    (content.items || []).forEach(function (it) {
+      if (!it.str || !it.str.trim()) return;
+      var tr = pdfjsLib.Util.transform(vp.transform, it.transform);
+      var h = it.height || Math.hypot(tr[2], tr[3]) || 10;
+      var w = it.width || 0;
+      items.push({ text: it.str, x: tr[4], y: tr[5] - h, w: w, h: h, base: tr[5] });
     });
+    if (!items.length) return [];
+
+    items.sort(function (a, b) { return a.base - b.base || a.x - b.x; });
+
     var lines = [];
-    var lastY = null;
     items.forEach(function (it) {
-      var y = Math.round(it.transform[5]);
-      if (lastY === null || Math.abs(y - lastY) > 2) {
-        lines.push(it.str);
+      var ln = lines[lines.length - 1];
+      if (ln && Math.abs(ln.base - it.base) <= Math.max(2, it.h * 0.45)) {
+        ln.items.push(it);
+        ln.base = (ln.base * ln.items.length + it.base) / (ln.items.length + 1);
       } else {
-        var prev = lines[lines.length - 1];
-        var needSpace = /[A-Za-z0-9,.;:)\]"'%]$/.test(prev) && /^[A-Za-z0-9(\["']/.test(it.str);
-        lines[lines.length - 1] = prev + (needSpace ? ' ' : '') + it.str;
+        lines.push({ base: it.base, items: [it] });
       }
-      lastY = y;
     });
-    return lines.join('\n');
+
+    lines.forEach(function (ln) {
+      ln.items.sort(function (a, b) { return a.x - b.x; });
+      var text = '';
+      ln.items.forEach(function (it, i) {
+        var needSpace = i > 0 && /[A-Za-z0-9,.;:)\]"'%]$/.test(text) && /^[A-Za-z0-9(\["']/.test(it.text);
+        text += (needSpace ? ' ' : '') + it.text;
+      });
+      ln.text = text;
+      ln.x = Math.min.apply(null, ln.items.map(function (i) { return i.x; }));
+      ln.right = Math.max.apply(null, ln.items.map(function (i) { return i.x + i.w; }));
+      ln.y = Math.min.apply(null, ln.items.map(function (i) { return i.y; }));
+      ln.h = Math.max.apply(null, ln.items.map(function (i) { return i.h; }));
+    });
+
+    var blocks = [];
+    lines.forEach(function (ln) {
+      var b = blocks[blocks.length - 1];
+      var gap = b ? ln.y - (b.y + b.h) : 1e9;
+      if (b && gap < ln.h * 1.2 && Math.abs(ln.x - b.x) < ln.h * 2.5) {
+        b.lines.push(ln);
+        b.x = Math.min(b.x, ln.x);
+        b.y = Math.min(b.y, ln.y);
+        b.right = Math.max(b.right, ln.right);
+        b.bottom = Math.max(b.bottom, ln.y + ln.h);
+        b.text += '\n' + ln.text;
+      } else {
+        blocks.push({
+          x: ln.x, y: ln.y, right: ln.right, bottom: ln.y + ln.h,
+          h: ln.h, text: ln.text, lines: [ln]
+        });
+      }
+    });
+
+    return blocks.map(function (b) {
+      return {
+        x: b.x, y: b.y,
+        w: Math.max(8, b.right - b.x),
+        h: Math.max(6, b.bottom - b.y),
+        lineCount: b.lines.length,
+        text: b.text
+      };
+    });
+  }
+
+  async function translateBlocks(blocks) {
+    var batches = [];
+    var cur = [];
+    var size = 0;
+    blocks.forEach(function (b, i) {
+      var t = '【' + (i + 1) + '】' + b.text;
+      if (size + t.length > 3500 && cur.length) { batches.push(cur); cur = []; size = 0; }
+      cur.push({ idx: i, text: t });
+      size += t.length + 2;
+    });
+    if (cur.length) batches.push(cur);
+
+    var results = {};
+    for (var bi = 0; bi < batches.length; bi++) {
+      if (batches.length > 1) {
+        $('#ptBody').innerHTML = '<div class="pt-loading"><span class="spinner sm"></span>正在翻译 第 ' +
+          (bi + 1) + ' / ' + batches.length + ' 组…</div>';
+      }
+      var payload = batches[bi].map(function (x) { return x.text; }).join('\n\n');
+      var out = await translateChunk(payload);
+      var parts = out.split(/【\s*(\d+)\s*】/);
+      for (var i = 1; i < parts.length; i += 2) {
+        var n = Number(parts[i]);
+        var txt = (parts[i + 1] || '').trim();
+        if (n && txt) results[n] = txt;
+      }
+    }
+
+    var got = Object.keys(results).length;
+    if (!got) throw new Error('译文格式解析失败，请重试');
+
+    blocks.forEach(function (b, i) { b.trans = results[i + 1] || ''; });
+    return blocks;
   }
 
   function chunkText(text, size) {
@@ -1731,19 +2017,6 @@
     });
     if (cur) chunks.push(cur);
     return chunks;
-  }
-
-  async function translateLong(text) {
-    var parts = chunkText(text, 1200);
-    var out = [];
-    for (var i = 0; i < parts.length; i++) {
-      if (parts.length > 1) {
-        $('#ptBody').innerHTML = '<div class="pt-loading"><span class="spinner sm"></span>正在翻译 ' +
-          (i + 1) + ' / ' + parts.length + '…</div>';
-      }
-      out.push(await translateChunk(parts[i]));
-    }
-    return out.join('\n\n');
   }
 
   async function translateChunk(text) {
@@ -1779,8 +2052,8 @@
         messages: [
           {
             role: 'system',
-            content: '你是专业的技术文档翻译。把用户提供的文本翻译成' + cfg.target +
-              '。要求：忠实原文、术语准确、语句通顺；保留段落与换行；只输出译文，不要解释、不要附原文。'
+            content: '你是专业的技术文档翻译。用户会给你若干段带【n】编号的文本。请逐段翻译成' + cfg.target +
+              '，输出时保留完全相同的【n】编号，段落顺序不变，段与段之间空一行。要求：忠实原文、术语准确、语句通顺；只输出译文，不要解释、不要附原文。'
           },
           { role: 'user', content: text }
         ]
@@ -1812,26 +2085,28 @@
     if (transCache[key]) {
       pdfState.trans[no] = transCache[key];
       togglePdfTranslation(true);
-      showTransResult(no, transCache[key]);
+      showTransResult(no, transCache[key].text);
       return;
     }
 
     body.innerHTML = '<div class="pt-loading"><span class="spinner sm"></span>正在提取文字…</div>';
     try {
       var page = await pdfState.doc.getPage(no);
-      var text = await extractPageText(page);
-      if (!text.trim()) {
+      var blocks = await extractBlocks(page);
+      if (!blocks.length) {
         body.innerHTML = '<p class="pt-hint">这一页提取不到文字，可能是扫描件/图片型 PDF，暂时无法翻译。</p>';
         return;
       }
       body.innerHTML = '<div class="pt-loading"><span class="spinner sm"></span>正在翻译（' +
-        text.length + ' 字符）…</div>';
-      var out = await translateLong(text);
-      transCache[key] = out;
+        blocks.length + ' 段）…</div>';
+      var done = await translateBlocks(blocks);
+      var textOut = done.map(function (b) { return b.trans; }).filter(Boolean).join('\n\n');
+      var record = { blocks: done, text: textOut };
+      transCache[key] = record;
       saveTransCache();
-      pdfState.trans[no] = out;
+      pdfState.trans[no] = record;
       togglePdfTranslation(true);
-      showTransResult(no, out);
+      showTransResult(no, textOut);
     } catch (err) {
       console.error(err);
       body.innerHTML = '';
@@ -2377,6 +2652,7 @@
     $('#btnImport').addEventListener('click', function (e) {
       e.stopPropagation();
       $('#importMenu').hidden = !$('#importMenu').hidden;
+      $('#pdfMenu').hidden = true;
     });
     $('#btnImportZip').addEventListener('click', function () {
       $('#importMenu').hidden = true;
@@ -2388,7 +2664,29 @@
     });
     document.addEventListener('click', function (e) {
       if (!$('#importMenu').hidden && !e.target.closest('#importWrap')) $('#importMenu').hidden = true;
+      if (!$('#pdfMenu').hidden && !e.target.closest('#pdfWrap')) $('#pdfMenu').hidden = true;
     });
+
+    $('#btnPdfImport').addEventListener('click', function (e) {
+      e.stopPropagation();
+      $('#pdfMenu').hidden = !$('#pdfMenu').hidden;
+      $('#importMenu').hidden = true;
+    });
+    $('#btnPdfFile').addEventListener('click', function () {
+      $('#pdfMenu').hidden = true;
+      $('#pdfInput').click();
+    });
+    $('#btnPdfZip').addEventListener('click', function () {
+      $('#pdfMenu').hidden = true;
+      $('#pdfZipInput').click();
+    });
+    $('#pdfZipInput').addEventListener('change', function (e) {
+      var f = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (f) importPdfZip(f);
+    });
+    $('#btnPdfOutline').addEventListener('click', function () { setPdfOutline(); });
+    $('#poClose').addEventListener('click', function () { setPdfOutline(false); });
 
     $('#btnWelcomeImport').addEventListener('click', function () { $('#fileInput').click(); });
     $('#btnWelcomeDir').addEventListener('click', function () { pickFolder(); });
@@ -2691,6 +2989,8 @@
     } else {
       restoreLast();
     }
+
+    setTimeout(restorePdfSession, 900);
 
     // PWA：离线可用（http/https 下才注册）
     if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {

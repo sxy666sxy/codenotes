@@ -63,6 +63,22 @@
         </button>
       </div>
     </div>
+
+    <div class="menu-wrap" id="pdfWrap">
+      <button class="btn" id="btnPdfImport" title="导入 PDF">
+        <svg class="ico"><use href="#i-pdf"/></svg><span>PDF</span>
+      </button>
+      <div class="menu" id="pdfMenu" hidden role="menu">
+        <button class="menu-item" id="btnPdfFile" role="menuitem">
+          <svg class="ico sm"><use href="#i-pdf"/></svg>
+          <span><b>选择 PDF 文件</b><em>从文件管理器选一个 .pdf</em></span>
+        </button>
+        <button class="menu-item" id="btnPdfZip" role="menuitem">
+          <svg class="ico sm"><use href="#i-doc"/></svg>
+          <span><b>选择压缩包</b><em>把 PDF 打包成一个 .zip</em></span>
+        </button>
+      </div>
+    </div>
     <button class="icon-btn" id="btnExport" title="导出注释" aria-label="导出注释">
       <svg class="ico"><use href="#i-export"/></svg>
     </button>
@@ -187,6 +203,7 @@
           <button class="chip" id="pdfFit" title="适应宽度">适应</button>
           <button class="chip" id="btnTranslate" title="翻译当前页">译</button>
           <button class="chip" id="pdfTransToggle" title="切换原文 / 译文" hidden>译文</button>
+          <button class="chip" id="btnPdfOutline" title="PDF 目录">目录</button>
         </div>
         <div class="pdf-stage" id="pdfStage">
           <div class="pdf-pages" id="pdfPages"></div>
@@ -196,6 +213,14 @@
             <p class="pe-hint">点「打开 PDF」选择文件；<br>压缩包 / 文件夹里如果有 PDF，在左侧直接点开也行</p>
           </div>
         </div>
+        <aside class="pdf-outline" id="pdfOutline" hidden>
+          <div class="po-head">
+            <b>目录</b>
+            <button class="icon-btn sm" id="poClose" aria-label="关闭目录"><svg class="ico sm"><use href="#i-x"/></svg></button>
+          </div>
+          <div class="po-body" id="poBody"></div>
+        </aside>
+
         <aside class="pdf-trans" id="pdfTrans" hidden>
           <div class="pt-head">
             <b id="ptTitle">翻译 · 第 1 页</b>
@@ -272,6 +297,7 @@
 
 <input type="file" id="dirInput" webkitdirectory directory multiple hidden>
 <input type="file" id="pdfInput" accept="application/pdf" hidden>
+<input type="file" id="pdfZipInput" accept=".zip,application/zip" hidden>
 <input type="file" id="fileInput" accept=".zip,.txt,.md,.js,.ts,.py,.json,.html,.css,.java,.c,.cpp,.go,.rs,.sh,application/zip" hidden>
 
 <script src="vendor/pdf.min.js"></script>

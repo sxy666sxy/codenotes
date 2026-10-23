@@ -742,18 +742,20 @@ body.no-inline-notes .inline-note { display: none; }
 .pdf-stage {
   flex: 1; overflow: auto; background: var(--pdf-bg);
   padding: 12px; position: relative;
-  touch-action: pan-y; overscroll-behavior: contain;
+  touch-action: pan-x pan-y; overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
 }
 .pdf-pages {
-  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  display: block; width: max-content; min-width: 100%;
+  margin: 0 auto;
   will-change: transform;
 }
 .pdf-page {
   position: relative; background: #fff; border-radius: 2px; overflow: hidden;
   box-shadow: 0 8px 28px rgba(0, 0, 0, .28);
-  flex: none;
+  margin: 0 auto 12px;
 }
+.pdf-page:last-child { margin-bottom: 0; }
 .pdf-page canvas { display: block; width: 100%; height: 100%; }
 .pdf-trans {
   position: absolute; top: 43px; right: 0; bottom: 0;
@@ -843,3 +845,56 @@ body.tab-pdf .notes-panel { display: none !important; }
   -webkit-overflow-scrolling: touch;
 }
 .pdf-trans-overlay .t-empty { color: #8a8f99; font-size: 12px; }
+
+
+/* PDF 逐块译文覆盖 */
+.pdf-tr-block {
+  position: absolute; z-index: 3;
+  background: #fff; color: #111;
+  overflow: hidden;
+  line-height: 1.2;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  padding: 0 1px;
+}
+
+/* PDF 目录（右侧） */
+.pdf-outline {
+  position: absolute; top: 43px; right: 0; bottom: 0;
+  width: min(320px, 84vw);
+  display: flex; flex-direction: column;
+  background: var(--panel); border-left: 1px solid var(--line);
+  box-shadow: -10px 0 28px rgba(0, 0, 0, .14);
+  z-index: 16;
+}
+.po-head {
+  flex: none; display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 8px 8px 14px; border-bottom: 1px solid var(--line-2);
+}
+.po-head b { font-size: 12.5px; }
+.po-body { flex: 1; overflow-y: auto; padding: 8px 8px calc(16px + var(--inset-bottom)); }
+.po-sec { margin-bottom: 14px; }
+.po-title { font-size: 11px; color: var(--muted); padding: 4px 8px 6px; letter-spacing: .3px; }
+.po-item {
+  display: block; width: 100%; text-align: left;
+  padding: 7px 8px; border: 0; border-radius: 6px;
+  background: none; color: var(--text);
+  font: 12.5px/1.5 var(--font-ui); cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.po-item:hover { background: var(--hover); }
+.po-item.on { background: var(--accent-soft); color: var(--accent); }
+.po-pages { display: flex; flex-wrap: wrap; gap: 5px; padding: 4px 6px; }
+.po-page {
+  min-width: 34px; padding: 5px 7px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--panel-2);
+  color: var(--muted); font: 11.5px/1 var(--font-ui); cursor: pointer;
+}
+.po-page.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+@media (max-width: 880px) {
+  .pdf-outline { position: fixed; top: 0; bottom: 0; width: min(78vw, 320px); z-index: 66; border-radius: 0; }
+}
+
+@media (max-width: 430px) {
+  #btnPdfImport span { display: none; }
+  #btnPdfImport { padding: 0 9px; }
+}
