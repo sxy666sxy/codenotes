@@ -374,8 +374,7 @@ body.sb-hidden .sidebar { display: none; }
 }
 .crow:hover { background: var(--hover); }
 .crow.sel { background: var(--sel); box-shadow: inset 2.5px 0 0 var(--accent); }
-.crow.has-note { background: color-mix(in srgb, var(--note) 7%, transparent); }
-.crow.has-note.sel { background: color-mix(in srgb, var(--accent) 10%, var(--bg)); }
+/* 有注释的行不再整行高亮，只保留行尾注释文字的颜色 */
 .crow.hit { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .crow.flash { animation: flash 1.1s ease; }
 .ln {
@@ -387,7 +386,7 @@ body.sb-hidden .sidebar { display: none; }
   user-select: none; -webkit-user-select: none;
   position: relative;
 }
-.crow.has-note .ln { color: var(--note); font-weight: 600; }
+
 .crow { width: max-content; min-width: 100%; }
 .crow .code {
   flex: 0 0 auto; min-width: 0;
@@ -657,7 +656,7 @@ body.no-tree-notes .tree-note { display: none; }
 @media (max-width: 880px) { .row-edit { opacity: .45; } }
 
 .inline-note {
-  color: var(--note);
+  color: var(--inline-note-color, var(--note));
   opacity: .92;
   font-style: italic;
   white-space: pre-wrap;
@@ -954,3 +953,46 @@ body.tab-pdf .notes-panel { display: none !important; }
 .guide ul { margin: 0; padding-left: 18px; color: var(--muted); }
 .guide li { margin: 3px 0; }
 .guide b { color: var(--text); font-weight: 600; }
+
+
+/* 自定义高亮词 */
+.t-custom { font-weight: 600; }
+
+/* PDF 页码输入 */
+.pdf-page-wrap { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; color: var(--muted); }
+.pdf-page-input {
+  width: 42px; height: 26px; text-align: center;
+  border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel); color: var(--text);
+  font: 12px var(--font-ui); outline: 0;
+  -moz-appearance: textfield;
+}
+.pdf-page-input::-webkit-outer-spin-button,
+.pdf-page-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.pdf-page-input:focus { border-color: var(--accent); }
+
+/* PDF 文件名放在按钮下方 */
+.pdf-open-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; flex: none; }
+.pdf-open-wrap .pdf-name {
+  max-width: 150px; padding: 0 2px;
+  font-size: 10.5px; line-height: 1.2; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* 设置：高亮规则 */
+.rule-row { display: flex; align-items: center; gap: 6px; padding: 5px 2px; }
+.rule-row input[type="color"] {
+  width: 30px; height: 30px; padding: 0; border: 1px solid var(--line);
+  border-radius: 6px; background: none; flex: none;
+}
+.rule-row input[type="text"] {
+  flex: 1; min-width: 0; height: 32px; padding: 0 9px;
+  border: 1px solid var(--line); border-radius: 7px;
+  background: var(--panel-2); color: var(--text); font: 12px var(--font-ui); outline: 0;
+}
+.rule-row input[type="text"]:focus { border-color: var(--accent); }
+
+.set-row input[type="color"] {
+  flex: none; width: 32px; height: 32px; padding: 0;
+  border: 1px solid var(--line); border-radius: 7px; background: none;
+}

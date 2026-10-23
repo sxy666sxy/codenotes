@@ -191,12 +191,17 @@
 
       <section class="pdf-view" id="pdfView" hidden>
         <div class="pdf-bar">
-          <button class="chip" id="btnOpenPdf">
-            <svg class="ico sm"><use href="#i-pdf"/></svg><span>打开 PDF</span>
-          </button>
-          <span class="pdf-name" id="pdfName">未打开文件</span>
+          <div class="pdf-open-wrap">
+            <button class="chip" id="btnOpenPdf">
+              <svg class="ico sm"><use href="#i-pdf"/></svg><span>打开 PDF</span>
+            </button>
+            <span class="pdf-name" id="pdfName">未打开文件</span>
+          </div>
           <span class="grow"></span>
-          <span class="pdf-page" id="pdfPage">– / –</span>
+          <span class="pdf-page-wrap">
+            <input class="pdf-page-input" id="pdfPageInput" inputmode="numeric" value="1" aria-label="页码">
+            <span id="pdfPageTotal">/ 0</span>
+          </span>
           <button class="icon-btn sm" id="pdfZoomOut" title="缩小"><svg class="ico sm"><use href="#i-minus"/></svg></button>
           <button class="icon-btn sm" id="pdfZoomIn" title="放大"><svg class="ico sm"><use href="#i-plus"/></svg></button>
           <button class="chip" id="pdfFit" title="适应宽度">适应</button>

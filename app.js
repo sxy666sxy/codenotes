@@ -6,6 +6,66 @@
 
   var $ = function (sel, root) { return (root || document).querySelector(sel); };
   var $$ = function (sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); };
+  function escAttr(v) {
+    return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  }
+
+  function compileHighlights() {
+    var rules = store.settings.highlightRules || [];
+    state.highlightRules = rules.map(function (r) {
+      return {
+        color: r.color || '#ff7b60',
+        words: String(r.words || '').split(/[,，]/).map(function (w) { return w.trim(); }).filter(Boolean)
+      };
+    }).filter(function (r) { return r.words.length; });
+  }
+
+  function applyNoteColor() {
+    var c = store.settings.noteColor;
+    if (c) document.documentElement.style.setProperty('--inline-note-color', c);
+    else document.documentElement.style.removeProperty('--inline-note-color');
+  }
+
+  function highlightTextSegment(text) {
+    var rules = state.highlightRules;
+    var matches = [];
+    var isWordChar = /[A-Za-z0-9_$]/;
+    rules.forEach(function (r) {
+      r.words.forEach(function (w) {
+        if (!w) return;
+        var from = 0;
+        var idx;
+        while ((idx = text.indexOf(w, from)) !== -1) {
+          var before = idx > 0 ? text.charAt(idx - 1) : '';
+          var after = text.charAt(idx + w.length);
+          var okBefore = !before || !isWordChar.test(before) || !isWordChar.test(w.charAt(0));
+          var okAfter = !after || !isWordChar.test(after) || !isWordChar.test(w.charAt(w.length - 1));
+          if (okBefore && okAfter) matches.push({ start: idx, end: idx + w.length, color: r.color });
+          from = idx + w.length;
+        }
+      });
+    });
+    if (!matches.length) return text;
+    matches.sort(function (a, b) { return a.start - b.start || (b.end - b.start) - (a.end - a.start); });
+    var out = '';
+    var pos = 0;
+    matches.forEach(function (m) {
+      if (m.start < pos) return;
+      out += text.slice(pos, m.start);
+      out += '<span class="t-custom" style="color:' + m.color + '">' + text.slice(m.start, m.end) + '</span>';
+      pos = m.end;
+    });
+    return out + text.slice(pos);
+  }
+
+  function applyCustomHighlights(html) {
+    if (!state.highlightRules.length || !html) return html;
+    return html.replace(/(<[^>]*>)|([^<]+)/g, function (m, tag, text) {
+      if (tag || !text) return m;
+      return highlightTextSegment(text);
+    });
+  }
+
   var esc = function (s) { return HL.escape(String(s == null ? '' : s)); };
 
   var LS_KEY = 'codenotes.v1';
@@ -18,6 +78,7 @@
   var store = loadStore();
 
   var state = {
+    highlightRules: [],
     project: null,
     sig: null,
     current: null,
@@ -793,7 +854,7 @@
       row.dataset.n = String(n);
       if (noteVal) row.classList.add('has-note');
       if (state.findTerm && raw.toLowerCase().indexOf(state.findTerm) >= 0) row.classList.add('hit');
-      var html = res.html || ' ';
+      var html = applyCustomHighlights(res.html || ' ');
       if (cut) html += '<span class="cut-mark"> … 已截断（原行 ' + raw.length + ' 字符）</span>';
       if (noteVal) html += '<span class="inline-note">' + esc(formatInlineNote(noteVal)) + '</span>';
       row.innerHTML = '<span class="ln">' + n + '</span><span class="code">' + html + '</span>';
@@ -1438,7 +1499,7 @@
     $('#pdfName').textContent = pdfState.name;
     $('#pdfEmpty').hidden = true;
     $('#pdfPages').innerHTML = '';
-    $('#pdfPage').textContent = '…';
+    setPdfPageLabel(1, 0, true);
     $('#pdfTrans').hidden = true;
 
     try {
@@ -1469,7 +1530,7 @@
       console.error(err);
       $('#pdfPages').innerHTML = '';
       $('#pdfEmpty').hidden = false;
-      $('#pdfPage').textContent = '– / –';
+      setPdfPageLabel(1, 0, true);
       toast('PDF 打开失败：' + ((err && err.message) || '未知错误'));
     }
   }
@@ -1505,7 +1566,7 @@
       });
     }
 
-    $('#pdfPage').textContent = '1 / ' + doc.numPages;
+    setPdfPageLabel(1, doc.numPages);
     observePages();
     renderPageAt(0);
     renderPageAt(1);
@@ -1603,7 +1664,7 @@
       else break;
     }
     pdfState.current = best;
-    $('#pdfPage').textContent = best + ' / ' + pdfState.doc.numPages;
+    setPdfPageLabel(best, pdfState.doc.numPages);
     savePdfSession();
   }
 
@@ -1718,6 +1779,13 @@
   }
 
   /* ---------------- PDF 目录 / 跳页 ---------------- */
+  function setPdfPageLabel(cur, total, blank) {
+    var inp = $('#pdfPageInput');
+    var tot = $('#pdfPageTotal');
+    if (inp && document.activeElement !== inp) inp.value = blank ? '' : String(cur);
+    if (tot) tot.textContent = '/ ' + (total || 0);
+  }
+
   function goToPage(n) {
     if (!pdfState.doc) return;
     n = Math.max(1, Math.min(n, pdfState.pages.length));
@@ -1726,7 +1794,7 @@
     var stage = $('#pdfStage');
     stage.scrollTop = p.wrap.offsetTop - 6;
     pdfState.current = n;
-    $('#pdfPage').textContent = n + ' / ' + pdfState.doc.numPages;
+    setPdfPageLabel(n, pdfState.doc.numPages);
     renderPageAt(n - 1);
     onPdfScroll();
   }
@@ -2503,6 +2571,43 @@
     document.body.classList.toggle('code-wrap', wrap);
   }
 
+  function ruleRowsHtml() {
+    var rules = store.settings.highlightRules || [];
+    return rules.map(function (r, i) {
+      return '<div class="rule-row" data-i="' + i + '">' +
+        '<input type="color" class="rule-color" value="' + escAttr(r.color || '#ff7b72') + '">' +
+        '<input type="text" class="rule-words" value="' + escAttr(r.words || '') + '" placeholder="如 TODO,FIXME">' +
+        '<button class="icon-btn sm rule-del" title="删除这组"><svg class="ico sm"><use href="#i-x"/></svg></button>' +
+        '</div>';
+    }).join('');
+  }
+
+  function updateRule(i, key, val) {
+    var arr = store.settings.highlightRules || [];
+    if (!arr[i]) return;
+    arr[i][key] = val;
+    saveStore();
+    compileHighlights();
+  }
+
+  function addRule() {
+    var arr = (store.settings.highlightRules || []).slice();
+    arr.push({ color: '#ff7b72', words: '' });
+    store.settings.highlightRules = arr;
+    saveStore();
+    compileHighlights();
+    openSettings();
+  }
+
+  function removeRule(i) {
+    var arr = (store.settings.highlightRules || []).slice();
+    arr.splice(i, 1);
+    store.settings.highlightRules = arr;
+    saveStore();
+    compileHighlights();
+    openSettings();
+  }
+
   function saveTransSettings() {
     var get = function (sel, dflt) { var el = $(sel); return el ? el.value : dflt; };
     store.settings.translate = {
@@ -2533,6 +2638,13 @@
       '<span>关闭时（默认）长行和行尾注释不换行，可以左右滑动查看；打开后按窗口宽度折行。</span></div>',
       '<button class="switch" role="switch" data-key="wrapCode" aria-checked="' + wrap + '"><i></i></button></div>',
       '</div>',
+      '<div class="set-sep">代码高亮</div>',
+      '<div class="set-row"><div class="set-text"><b>注释文字颜色</b>' +
+      '<span>行尾「# 注释」的颜色，只影响显示</span></div>' +
+      '<input type="color" id="noteColor" value="' + (store.settings.noteColor || '#f2b64b') + '"></div>',
+      '<div class="set-field" style="padding-bottom:2px">自定义高亮词（每组一行，词用逗号分隔，如 TODO,FIXME,危险）</div>',
+      '<div id="ruleList">' + ruleRowsHtml() + '</div>',
+      '<button class="btn sm" id="btnAddRule" style="margin:2px 2px 10px">+ 添加一组</button>',
       '<div class="set-sep">PDF 翻译</div>',
       '<label class="set-field">翻译服务',
       '<select id="trProvider">',
@@ -2585,6 +2697,26 @@
       var el = $(q);
       if (el) el.addEventListener('change', saveTransSettings);
     });
+
+    var ncEl = $('#noteColor');
+    if (ncEl) {
+      ncEl.addEventListener('input', function () {
+        store.settings.noteColor = this.value;
+        applyNoteColor();
+        saveStore();
+      });
+    }
+    $$('#ruleList .rule-row').forEach(function (row) {
+      var i = Number(row.dataset.i);
+      var c = row.querySelector('.rule-color');
+      var w = row.querySelector('.rule-words');
+      var d = row.querySelector('.rule-del');
+      if (c) c.addEventListener('input', function () { updateRule(i, 'color', this.value); });
+      if (w) w.addEventListener('change', function () { updateRule(i, 'words', this.value); });
+      if (d) d.addEventListener('click', function () { removeRule(i); });
+    });
+    var addBtn = $('#btnAddRule');
+    if (addBtn) addBtn.addEventListener('click', addRule);
 
     var balBtn = $('#btnBalance');
     if (balBtn) balBtn.addEventListener('click', refreshBalance);
@@ -3017,6 +3149,22 @@
       e.target.value = '';
       if (f) importPdfZip(f);
     });
+    $('#pdfPageInput').addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      var n = parseInt(this.value, 10);
+      if (!isNaN(n) && pdfState.doc) goToPage(n);
+      else if (pdfState.doc) setPdfPageLabel(pdfState.current, pdfState.doc.numPages);
+      this.blur();
+    });
+    $('#pdfPageInput').addEventListener('focus', function () { this.select(); });
+    $('#pdfPageInput').addEventListener('blur', function () {
+      if (!pdfState.doc) return;
+      var n = parseInt(this.value, 10);
+      if (!isNaN(n) && n !== pdfState.current) goToPage(n);
+      else setPdfPageLabel(pdfState.current, pdfState.doc.numPages);
+    });
+
     $('#btnPdfFind').addEventListener('click', openPdfFind);
     $('#pdfFindClose').addEventListener('click', closePdfFind);
     $('#pdfFindPrev').addEventListener('click', function () { stepPdfMatch(-1); });
@@ -3298,6 +3446,8 @@
 
     applyTheme();
     applyDisplaySettings();
+    compileHighlights();
+    applyNoteColor();
     pdfState.transScale = Number(store.settings.transScale) || 1;
     if (store.settings.codeFont) setCodeFont(Number(store.settings.codeFont) || 13);
 
