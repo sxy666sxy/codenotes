@@ -718,13 +718,10 @@
   function renderHead() {
     if (!state.current) return;
     var parts = state.current.split('/');
-    var html = parts.map(function (p, i) {
-      var name = esc(p);
-      return i === parts.length - 1
-        ? '<span class="last">' + name + '</span>'
-        : '<span>' + name + '</span><span class="sep">/</span>';
-    }).join('');
-    $('#crumbs').innerHTML = html;
+    var fname = parts.pop() || state.current;
+    var dir = parts.join('/');
+    $('#crumbs').innerHTML = '<span class="fname">' + esc(fname) + '</span>' +
+      (dir ? '<span class="fdir">' + esc(dir) + '/</span>' : '');
 
     var entry = state.project.byPath.get(state.current);
     var rec = getRec(state.current);
@@ -1287,6 +1284,49 @@
      底部标签：代码 / PDF
   ------------------------------------------------------------ */
   var pdfState = { doc: null, page: 1, scale: 1, fit: true, name: '', token: 0 };
+
+  function setCodeFont(px) {
+    px = Math.max(9, Math.min(24, px));
+    document.documentElement.style.setProperty('--code-size', (Math.round(px * 10) / 10) + 'px');
+    return px;
+  }
+
+  function currentCodeFont() {
+    var v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--code-size'));
+    return v || 13;
+  }
+
+  function bindCodeGestures() {
+    var viewer = $('#viewer');
+    if (!viewer) return;
+    var pinch = null;
+
+    viewer.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 2) return;
+      var cs = currentCodeFont();
+      pinch = { d: touchDist(e.touches), size: cs, cur: cs };
+    }, { passive: true });
+
+    viewer.addEventListener('touchmove', function (e) {
+      if (!pinch || e.touches.length !== 2) return;
+      e.preventDefault();
+      pinch.cur = setCodeFont(pinch.size * (touchDist(e.touches) / pinch.d));
+    }, { passive: false });
+
+    viewer.addEventListener('touchend', function () {
+      if (!pinch) return;
+      store.settings.codeFont = pinch.cur;
+      saveStore();
+      pinch = null;
+    });
+
+    viewer.addEventListener('wheel', function (e) {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      store.settings.codeFont = setCodeFont(currentCodeFont() + (e.deltaY < 0 ? 0.5 : -0.5));
+      saveStore();
+    }, { passive: false });
+  }
 
   function setTab(tab) {
     state.tab = tab;
@@ -2849,6 +2889,7 @@
     $('#ptClose').addEventListener('click', function () { $('#pdfTrans').hidden = true; });
     bindTransPanelDrag();
     $('#pdfStage').addEventListener('scroll', onPdfScroll, { passive: true });
+    bindCodeGestures();
     bindPdfGestures();
 
     $('#btnEdit').addEventListener('click', toggleEdit);
@@ -3069,6 +3110,7 @@
     applyTheme();
     applyDisplaySettings();
     pdfState.transScale = Number(store.settings.transScale) || 1;
+    if (store.settings.codeFont) setCodeFont(Number(store.settings.codeFont) || 13);
 
     if (typeof pdfjsLib !== 'undefined' && pdfjsLib.GlobalWorkerOptions) {
       pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
