@@ -363,7 +363,7 @@ body.sb-hidden .sidebar { display: none; }
 .ed-body { flex: 1; display: flex; min-height: 0; position: relative; }
 
 .viewer { flex: 1; overflow: auto; padding: 10px 0 40vh; overscroll-behavior: contain; }
-.lines { width: 100%; }
+.lines { width: max-content; min-width: 100%; }
 .crow {
   display: flex; align-items: flex-start;
   font: var(--code-size)/1.7 var(--font-code);
@@ -386,12 +386,20 @@ body.sb-hidden .sidebar { display: none; }
   position: relative;
 }
 .crow.has-note .ln { color: var(--note); font-weight: 600; }
+.crow { width: max-content; min-width: 100%; }
 .crow .code {
-  flex: 1; min-width: 0;
-  white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
-  padding-right: 22px;
+  flex: 0 0 auto; min-width: 0;
+  white-space: pre; overflow-wrap: normal; word-break: normal;
+  padding-right: 26px;
   color: var(--t-var);
   tab-size: 4;
+}
+/* 自动换行模式（设置里可切换） */
+body.code-wrap .lines,
+body.code-wrap .crow { width: 100%; min-width: 0; }
+body.code-wrap .crow .code {
+  flex: 1 1 auto; min-width: 0;
+  white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
 }
 
 .t-kw { color: var(--t-kw); }

@@ -1717,7 +1717,7 @@
   /* ---------------- PDF 译文覆盖 ---------------- */
   function clearTransOverlays() {
     pdfState.pages.forEach(function (p) {
-      var olds = p.wrap.querySelectorAll('.pdf-trans-overlay, .pdf-tr-block');
+      var olds = p.wrap.querySelectorAll('.pdf-trans-overlay, .pdf-tr-block, .pdf-trans-base');
       Array.prototype.forEach.call(olds, function (el) { el.remove(); });
     });
   }
@@ -2260,8 +2260,10 @@
   function applyDisplaySettings() {
     var inline = store.settings.inlineNotes !== false;
     var tree = store.settings.treeNotes !== false;
+    var wrap = store.settings.wrapCode === true;
     document.body.classList.toggle('no-inline-notes', !inline);
     document.body.classList.toggle('no-tree-notes', !tree);
+    document.body.classList.toggle('code-wrap', wrap);
   }
 
   function saveTransSettings() {
@@ -2279,6 +2281,7 @@
   function openSettings() {
     var inline = store.settings.inlineNotes !== false;
     var tree = store.settings.treeNotes !== false;
+    var wrap = store.settings.wrapCode === true;
     var tr = getTransCfg();
 
     openModal('设置', [
@@ -2289,6 +2292,9 @@
       '<div class="set-row"><div class="set-text"><b>目录名称后显示注释</b>' +
       '<span>在左侧文件和文件夹名称后显示「（注释）」。注释是单独保存的，不会写进源码。</span></div>',
       '<button class="switch" role="switch" data-key="treeNotes" aria-checked="' + tree + '"><i></i></button></div>',
+      '<div class="set-row"><div class="set-text"><b>代码自动换行</b>' +
+      '<span>关闭时（默认）长行和行尾注释不换行，可以左右滑动查看；打开后按窗口宽度折行。</span></div>',
+      '<button class="switch" role="switch" data-key="wrapCode" aria-checked="' + wrap + '"><i></i></button></div>',
       '</div>',
       '<div class="set-sep">PDF 翻译</div>',
       '<label class="set-field">翻译服务',
@@ -2673,6 +2679,10 @@
     document.addEventListener('click', function (e) {
       if (!$('#importMenu').hidden && !e.target.closest('#importWrap')) $('#importMenu').hidden = true;
       if (!$('#pdfMenu').hidden && !e.target.closest('#pdfWrap')) $('#pdfMenu').hidden = true;
+      // 点 PDF 目录以外的地方收起目录
+      if (!$('#pdfOutline').hidden && !e.target.closest('#pdfOutline') && !e.target.closest('#btnPdfOutline')) {
+        setPdfOutline(false);
+      }
     });
 
     $('#btnPdfImport').addEventListener('click', function (e) {
