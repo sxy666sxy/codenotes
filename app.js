@@ -1331,7 +1331,7 @@
     doc: null, name: '', scale: 1, fit: true,
     baseW: 595, baseH: 842, pages: [],
     observer: null, current: 1, previewScale: 0,
-    zipPdfs: [], lastData: null
+    zipPdfs: [], lastData: null, transScale: 1
   };
   var transCache = {};
   (function loadTransCache() {
@@ -1746,11 +1746,23 @@
 
       // 逐块覆盖，保持原版式
       if (t.blocks && t.blocks.length) {
-        // 整页白底，避免原文从译文缝隙里露出来
-        var base = document.createElement('div');
-        base.className = 'pdf-trans-base';
-        p.wrap.appendChild(base);
+        var scale = pdfState.transScale || 1;
 
+        // 1) 只把「文字所在的行」铺白，图片/图形保持可见
+        t.blocks.forEach(function (b) {
+          var rects = b.lines && b.lines.length ? b.lines : [{ x: b.x, y: b.y, w: b.w, h: b.h }];
+          rects.forEach(function (ln) {
+            var cover = document.createElement('div');
+            cover.className = 'pdf-tr-cover';
+            cover.style.left = (ln.x * s - 1) + 'px';
+            cover.style.top = (ln.y * s - 1) + 'px';
+            cover.style.width = (ln.w * s + 3) + 'px';
+            cover.style.height = (ln.h * s + 3) + 'px';
+            p.wrap.appendChild(cover);
+          });
+        });
+
+        // 2) 译文块
         t.blocks.forEach(function (b) {
           if (!b.trans) return;
           var el = document.createElement('div');
@@ -1760,20 +1772,23 @@
           el.style.top = (b.y * s) + 'px';
           el.style.width = Math.max(16, b.w * s + 2) + 'px';
           el.style.height = Math.max(6, b.h * s + 1) + 'px';
-          // 行距锁死为原文行高，字号在行内回缩，保证落在原来的行格子里
           el.style.lineHeight = lineH + 'px';
-          el.style.fontSize = Math.max(3, lineH * 0.78) + 'px';
+          el.style.fontSize = Math.max(3, lineH * 0.78 * scale) + 'px';
           el.textContent = b.trans;
           p.wrap.appendChild(el);
         });
 
-        // 放不下就缩字号（行高不变，行数不变）
+        // 3) 放不下先缩字号；缩到底还放不下就向下扩高，保证不裁字
         var blocks = p.wrap.querySelectorAll('.pdf-tr-block');
         Array.prototype.forEach.call(blocks, function (el) {
           var fs = parseFloat(el.style.fontSize) || 9;
-          for (var k = 0; k < 10 && el.scrollHeight > el.clientHeight + 1 && fs > 2.4; k++) {
+          for (var k = 0; k < 12 && el.scrollHeight > el.clientHeight + 1 && fs > 2.6; k++) {
             fs *= 0.88;
             el.style.fontSize = fs + 'px';
+          }
+          if (el.scrollHeight > el.clientHeight + 2) {
+            el.style.height = (el.scrollHeight + 2) + 'px';
+            el.style.background = '#fff';
           }
         });
         return;
@@ -1788,6 +1803,15 @@
         p.wrap.appendChild(div);
       }
     });
+  }
+
+  function setTransScale(v) {
+    pdfState.transScale = Math.max(0.5, Math.min(2, Math.round(v * 10) / 10));
+    store.settings.transScale = pdfState.transScale;
+    saveStore();
+    renderTransOverlays();
+    var label = $('#ptScaleLabel');
+    if (label) label.textContent = Math.round(pdfState.transScale * 100) + '%';
   }
 
   function togglePdfTranslation(force) {
@@ -1808,6 +1832,30 @@
     pre.className = 'pt-text';
     pre.textContent = text;
     body.appendChild(pre);
+
+    var sizeRow = document.createElement('div');
+    sizeRow.className = 'pt-actions pt-size';
+    var minus = document.createElement('button');
+    minus.className = 'btn sm';
+    minus.textContent = 'A−';
+    minus.addEventListener('click', function () { setTransScale((pdfState.transScale || 1) - 0.1); });
+    var label = document.createElement('span');
+    label.id = 'ptScaleLabel';
+    label.className = 'pt-scale-label';
+    label.textContent = Math.round((pdfState.transScale || 1) * 100) + '%';
+    var plus = document.createElement('button');
+    plus.className = 'btn sm';
+    plus.textContent = 'A+';
+    plus.addEventListener('click', function () { setTransScale((pdfState.transScale || 1) + 0.1); });
+    var reset = document.createElement('button');
+    reset.className = 'link-btn';
+    reset.textContent = '重置';
+    reset.addEventListener('click', function () { setTransScale(1); });
+    sizeRow.appendChild(minus);
+    sizeRow.appendChild(label);
+    sizeRow.appendChild(plus);
+    sizeRow.appendChild(reset);
+    body.appendChild(sizeRow);
 
     var actions = document.createElement('div');
     actions.className = 'pt-actions';
@@ -1966,6 +2014,13 @@
         w: Math.max(8, b.right - b.x),
         h: Math.max(6, b.bottom - b.y),
         lineCount: b.lines.length,
+        lines: b.lines.map(function (ln) {
+          return {
+            x: ln.x, y: ln.y,
+            w: Math.max(4, ln.right - ln.x),
+            h: Math.max(4, ln.h)
+          };
+        }),
         text: b.text
       };
     });
@@ -2968,6 +3023,7 @@
 
     applyTheme();
     applyDisplaySettings();
+    pdfState.transScale = Number(store.settings.transScale) || 1;
 
     if (typeof pdfjsLib !== 'undefined' && pdfjsLib.GlobalWorkerOptions) {
       pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';

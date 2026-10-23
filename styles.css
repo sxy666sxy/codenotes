@@ -909,3 +909,8 @@ body.tab-pdf .notes-panel { display: none !important; }
   #btnPdfImport span { display: none; }
   #btnPdfImport { padding: 0 9px; }
 }
+
+/* 译文：按行铺白（图片保持可见） */
+.pdf-tr-cover { position: absolute; z-index: 2; background: #fff; }
+.pt-size { align-items: center; gap: 6px; margin-top: 10px; }
+.pt-scale-label { font-size: 12px; color: var(--muted); min-width: 44px; text-align: center; }
