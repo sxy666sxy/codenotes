@@ -68,7 +68,7 @@
 
   var esc = function (s) { return HL.escape(String(s == null ? '' : s)); };
 
-  var APP_VERSION = '1.4.3';
+  var APP_VERSION = '1.4.4';
   var AI_PRESETS = [
     { id: 'deepseek', name: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
     { id: 'openai', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
@@ -2727,7 +2727,15 @@
       '<input type="color" id="noteColor" value="' + (store.settings.noteColor || '#f2b64b') + '"></div>',
       '<div class="set-field" style="padding-bottom:2px">自定义高亮词（每组一行，词用逗号分隔，如 TODO,FIXME,危险）</div>',
       '<div id="ruleList">' + ruleRowsHtml() + '</div>',
-      '<button class="btn sm" id="btnAddRule" style="margin:2px 2px 10px">+ 添加一组</button>'
+      '<button class="btn sm" id="btnAddRule" style="margin:2px 2px 10px">+ 添加一组</button>',
+      '<div class="set-sep">数据与备份</div>',
+      '<div class="set-field"><span id="dataPath" style="font-size:11.5px;line-height:1.7;color:var(--muted)">读取中…</span></div>',
+      '<div class="set-row"><div class="set-text"><b>导出备份</b>' +
+      '<span>全部注释 + 设置导出为 .json，保存位置由你选（可存到任意文件夹）</span></div>' +
+      '<button class="btn sm" id="btnBackup">导出</button></div>',
+      '<div class="set-row"><div class="set-text"><b>导入备份</b>' +
+      '<span>从 .json 恢复，会覆盖当前全部数据</span></div>' +
+      '<button class="btn sm" id="btnRestore">导入</button></div>'
     ].join('');
 
     var presetOptions = AI_PRESETS.map(function (p) {
@@ -2869,6 +2877,11 @@
 
     var balBtn = $('#btnBalance');
     if (balBtn) balBtn.addEventListener('click', refreshBalance);
+    var backupBtn = $('#btnBackup');
+    if (backupBtn) backupBtn.addEventListener('click', exportBackup);
+    var restoreBtn = $('#btnRestore');
+    if (restoreBtn) restoreBtn.addEventListener('click', importBackup);
+    showDataPath();
   }
 
   function guideHtml() {
@@ -2912,6 +2925,88 @@
 
   function openGuide() {
     openSettings('guide');
+  }
+
+  function nativeBridge() {
+    return !!(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.DirPicker);
+  }
+
+  function buildBackupJson() {
+    return JSON.stringify({
+      app: 'CodeNotes',
+      version: APP_VERSION,
+      at: Date.now(),
+      settings: store.settings,
+      projects: store.projects,
+      lastFile: store.lastFile || null
+    }, null, 2);
+  }
+
+  async function showDataPath() {
+    var el = $('#dataPath');
+    if (!el) return;
+    if (nativeBridge() && window.Capacitor.Plugins.DirPicker.dataDir) {
+      try {
+        var d = await window.Capacitor.Plugins.DirPicker.dataDir();
+        el.textContent = '注释和设置保存在应用私有目录：' + d.dir + '（WebView 存储，系统文件管理器看不到）。卸载应用会清空，建议定期导出备份。';
+        return;
+      } catch (e) { /* 忽略 */ }
+    }
+    el.textContent = '注释和设置保存在浏览器本地存储（localStorage / IndexedDB）。清理站点数据会清空，建议定期导出备份。';
+  }
+
+  async function exportBackup() {
+    var content = buildBackupJson();
+    var name = 'codenotes-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+    try {
+      if (nativeBridge() && window.Capacitor.Plugins.DirPicker.saveText) {
+        await window.Capacitor.Plugins.DirPicker.saveText({ name: name, content: content });
+        toast('备份已导出到你选择的位置');
+        return;
+      }
+      var blob = new Blob([content], { type: 'application/json' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 3000);
+      toast('已开始下载备份');
+    } catch (e) {
+      var msg = String((e && e.message) || e);
+      if (msg.indexOf('cancel') < 0) toast('导出失败：' + msg);
+    }
+  }
+
+  async function importBackup() {
+    if (nativeBridge() && window.Capacitor.Plugins.DirPicker.openText) {
+      try {
+        var res = await window.Capacitor.Plugins.DirPicker.openText();
+        applyBackup(res.text);
+      } catch (e) {
+        var msg = String((e && e.message) || e);
+        if (msg.indexOf('cancel') < 0) toast('导入失败：' + msg);
+      }
+      return;
+    }
+    $('#backupInput').click();
+  }
+
+  function applyBackup(text) {
+    try {
+      var d = JSON.parse(text);
+      if (!d || d.app !== 'CodeNotes') throw new Error('不是 CodeNotes 备份文件');
+      if (d.settings) store.settings = d.settings;
+      if (d.projects) store.projects = d.projects;
+      if (d.lastFile) store.lastFile = d.lastFile;
+      localStorage.setItem(LS_KEY, JSON.stringify(store));
+      toast('备份已恢复，正在重新载入…');
+      setTimeout(function () { location.reload(); }, 700);
+    } catch (e) {
+      toast('导入失败：' + ((e && e.message) || '文件格式不对'));
+    }
   }
 
   async function refreshBalance() {
@@ -3375,6 +3470,13 @@
 
     $('#btnWelcomeImport').addEventListener('click', function () { $('#fileInput').click(); });
     $('#btnWelcomeDir').addEventListener('click', function () { pickFolder(); });
+    $('#backupInput').addEventListener('change', function (e) {
+      var f = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (!f) return;
+      f.text().then(applyBackup).catch(function () { toast('读取备份失败'); });
+    });
+
     $('#dirInput').addEventListener('change', function (e) {
       var files = e.target.files;
       if (files && files.length) importDirectory(files);

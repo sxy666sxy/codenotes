@@ -15,6 +15,8 @@ import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 
 /**
  * 原生文件夹选择：用 SAF(ACTION_OPEN_DOCUMENT_TREE) 选目录，
@@ -25,6 +27,82 @@ public class DirPickerPlugin extends Plugin {
 
     private static final long MAX_TOTAL = 30L * 1024 * 1024; // 最多 30MB
     private static final int MAX_FILES = 3000;
+    private String pendingText = null;
+
+    /** 应用数据目录（给设置页展示用） */
+    @PluginMethod
+    public void dataDir(PluginCall call) {
+        JSObject res = new JSObject();
+        res.put("dir", getContext().getDataDir().getAbsolutePath());
+        res.put("webview", getContext().getDataDir().getAbsolutePath() + "/app_webview");
+        call.resolve(res);
+    }
+
+    /** 导出文本到用户选择的位置（SAF 创建文档） */
+    @PluginMethod
+    public void saveText(PluginCall call) {
+        pendingText = call.getString("content", "");
+        String name = call.getString("name", "codenotes-backup.json");
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/json");
+        intent.putExtra(Intent.EXTRA_TITLE, name);
+        startActivityForResult(call, intent, "onSavePicked");
+    }
+
+    @ActivityCallback
+    private void onSavePicked(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        if (result.getResultCode() != Activity.RESULT_OK || result.getData() == null || result.getData().getData() == null) {
+            pendingText = null;
+            call.reject("cancelled");
+            return;
+        }
+        Uri uri = result.getData().getData();
+        try (OutputStream os = getContext().getContentResolver().openOutputStream(uri)) {
+            if (os == null) throw new Exception("no stream");
+            os.write((pendingText == null ? "" : pendingText).getBytes(StandardCharsets.UTF_8));
+            os.flush();
+            JSObject res = new JSObject();
+            res.put("ok", true);
+            call.resolve(res);
+        } catch (Exception e) {
+            call.reject("写入失败：" + e.getMessage());
+        } finally {
+            pendingText = null;
+        }
+    }
+
+    /** 从用户选择的位置读取文本 */
+    @PluginMethod
+    public void openText(PluginCall call) {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        startActivityForResult(call, intent, "onOpenPicked");
+    }
+
+    @ActivityCallback
+    private void onOpenPicked(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        if (result.getResultCode() != Activity.RESULT_OK || result.getData() == null || result.getData().getData() == null) {
+            call.reject("cancelled");
+            return;
+        }
+        Uri uri = result.getData().getData();
+        try (InputStream in = getContext().getContentResolver().openInputStream(uri)) {
+            if (in == null) throw new Exception("no stream");
+            ByteArrayOutputStream buf = new ByteArrayOutputStream();
+            byte[] chunk = new byte[16 * 1024];
+            int n;
+            while ((n = in.read(chunk)) > 0) buf.write(chunk, 0, n);
+            JSObject res = new JSObject();
+            res.put("text", buf.toString(StandardCharsets.UTF_8.name()));
+            call.resolve(res);
+        } catch (Exception e) {
+            call.reject("读取失败：" + e.getMessage());
+        }
+    }
 
     @PluginMethod
     public void pick(PluginCall call) {
