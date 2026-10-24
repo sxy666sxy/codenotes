@@ -68,7 +68,7 @@
 
   var esc = function (s) { return HL.escape(String(s == null ? '' : s)); };
 
-  var APP_VERSION = '1.5.2';
+  var APP_VERSION = '1.5.3';
   var AI_PRESETS = [
     { id: 'deepseek', name: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
     { id: 'openai', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
@@ -477,6 +477,36 @@
       setTimeout(hideProgress, 380);
       idle();
     }
+  }
+
+  /** 从当前项目里移除一个文件（不影响磁盘上的压缩包） */
+  function removeFromProject(path) {
+    if (!state.project || !state.project.byPath.has(path)) return;
+    var oldSig = state.sig;
+    state.project.byPath.delete(path);
+    var entries = state.project.entries.filter(function (e) { return e.path !== path; });
+    state.project.entries = entries;
+    state.project.tree = buildTree(entries);
+    if (state.project.textCache) state.project.textCache.delete(path);
+    state.sig = signature(state.project.name, entries);
+
+    if (oldSig && oldSig !== state.sig && store.projects[oldSig] && !store.projects[state.sig]) {
+      store.projects[state.sig] = store.projects[oldSig];
+    }
+    saveStore();
+
+    renderProjectCard();
+    renderTree();
+    renderNoteStat();
+
+    if (state.current === path) {
+      state.current = null;
+      state.text = '';
+      state.lines = [];
+      $('#editor').hidden = true;
+      $('#welcome').hidden = false;
+    }
+    toast('已从项目移除该文件');
   }
 
   /** 把新导入的文件合并进当前项目，保留已有文件和注释 */
@@ -3818,7 +3848,78 @@
       if (t) revertContent();
     });
 
+    // ---- 长按文件：弹出清除菜单 ----
+    var lpTimer = 0;
+    var lpFired = false;
+    var lpPath = '';
+
+    function closeLp() {
+      $('#lpMenu').hidden = true;
+    }
+
+    function openLp(path, name, x, y) {
+      lpPath = path;
+      $('#lpTitle').textContent = name || path;
+      var menu = $('#lpMenu');
+      menu.hidden = false;
+      var w = menu.offsetWidth || 190;
+      var h = menu.offsetHeight || 140;
+      var left = Math.min(Math.max(8, x - w / 2), window.innerWidth - w - 8);
+      var top = Math.min(Math.max(8, y - 10), window.innerHeight - h - 8);
+      menu.style.left = left + 'px';
+      menu.style.top = top + 'px';
+    }
+
+    $('#tree').addEventListener('pointerdown', function (e) {
+      var row = e.target.closest('.trow');
+      if (!row || row.dataset.kind !== 'file') return;
+      if (e.target.closest('.row-edit')) return;
+      lpFired = false;
+      var path = row.dataset.path;
+      var name = row.dataset.name;
+      var x = e.clientX;
+      var y = e.clientY;
+      clearTimeout(lpTimer);
+      lpTimer = setTimeout(function () {
+        lpFired = true;
+        openLp(path, name, x, y);
+      }, 520);
+    });
+
+    ['pointerup', 'pointermove', 'pointercancel', 'pointerleave'].forEach(function (ev) {
+      $('#tree').addEventListener(ev, function () { clearTimeout(lpTimer); });
+    });
+
+    $('#lpCancel').addEventListener('click', closeLp);
+    document.addEventListener('click', function (e) {
+      if (!$('#lpMenu').hidden && !e.target.closest('#lpMenu') && !e.target.closest('#tree')) closeLp();
+    });
+
+    $('#lpClearNotes').addEventListener('click', function () {
+      var p = lpPath;
+      closeLp();
+      if (!p) return;
+      var bucket = ensureBucket();
+      if (bucket.notes[p]) {
+        delete bucket.notes[p];
+        saveStore();
+        renderTree();
+        renderNoteStat();
+        if (state.current === p) openFile(p);
+        toast('已清除这个文件的注释');
+      } else {
+        toast('这个文件还没有注释');
+      }
+    });
+
+    $('#lpRemoveFile').addEventListener('click', function () {
+      var p = lpPath;
+      closeLp();
+      if (p) removeFromProject(p);
+    });
+
     $('#tree').addEventListener('click', function (e) {
+      if (lpFired) { lpFired = false; return; }
       var edit = e.target.closest('.row-edit');
       if (edit) {
         e.stopPropagation();

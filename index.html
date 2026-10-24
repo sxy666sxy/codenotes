@@ -297,6 +297,17 @@
 
   <div class="scrim" id="scrim"></div>
 
+  <div class="lp-menu" id="lpMenu" hidden>
+    <div class="lp-title" id="lpTitle">文件</div>
+    <button class="lp-item" id="lpClearNotes">
+      <svg class="ico sm"><use href="#i-trash"/></svg><span>清除此文件的注释</span>
+    </button>
+    <button class="lp-item danger" id="lpRemoveFile">
+      <svg class="ico sm"><use href="#i-x"/></svg><span>从项目中移除该文件</span>
+    </button>
+    <button class="lp-item" id="lpCancel"><span>取消</span></button>
+  </div>
+
   <div class="busy" id="busy" hidden>
     <div class="spinner"></div>
     <div id="busyText">处理中…</div>
