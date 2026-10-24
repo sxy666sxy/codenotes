@@ -1133,3 +1133,25 @@ body.tab-pdf .notes-panel { display: none !important; }
 .po-file .ico { flex: none; opacity: .8; }
 .po-fname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .po-cur-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+/* PDF 目录分区头（可折叠） */
+.po-sec { margin-bottom: 4px; }
+.po-sec-head {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 8px 10px; border: 0; border-radius: 8px;
+  background: none; color: var(--muted);
+  font: 600 11.5px var(--font-ui); text-align: left; cursor: pointer;
+}
+.po-sec-head:hover { background: var(--hover); color: var(--text); }
+.po-sec-chev { flex: none; transition: transform .15s ease; }
+.po-sec-head.open .po-sec-chev { transform: rotate(90deg); }
+.po-sec-cur {
+  flex: 1; min-width: 0; margin-left: 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-weight: 400; color: var(--muted); text-align: right;
+}
+.pdf-page-no {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font: 13px var(--font-ui); color: var(--muted);
+}
+.pdf-page { position: relative; }

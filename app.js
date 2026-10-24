@@ -68,7 +68,7 @@
 
   var esc = function (s) { return HL.escape(String(s == null ? '' : s)); };
 
-  var APP_VERSION = '1.6.1';
+  var APP_VERSION = '1.6.2';
   var AI_PRESETS = [
     { id: 'deepseek', name: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
     { id: 'openai', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
@@ -1786,7 +1786,8 @@
     baseW: 595, baseH: 842, pages: [],
     observer: null, current: 1, previewScale: 0,
     zipPdfs: [], lastData: null, transScale: 1, pending: null,
-    library: [], libOpen: {}, libOutline: {}, curId: ''
+    library: [], libOpen: {}, libOutline: {}, curId: '',
+    listOpen: false, outlineCache: {}, offsets: null
   };
   var transCache = {};
   (function loadTransCache() {
@@ -2034,19 +2035,24 @@
       var wrap = document.createElement('div');
       wrap.className = 'pdf-page';
       wrap.dataset.page = i;
-      var canvas = document.createElement('canvas');
-      wrap.appendChild(canvas);
+      // canvas 真正渲染时才创建，避免几百页一次性建几百个 canvas
+      var ph = document.createElement('span');
+      ph.className = 'pdf-page-no';
+      ph.textContent = i;
+      wrap.appendChild(ph);
       wrap.style.width = Math.round(pdfState.baseW * pdfState.scale) + 'px';
       wrap.style.height = Math.round(pdfState.baseH * pdfState.scale) + 'px';
       host.appendChild(wrap);
       pdfState.pages.push({
-        no: i, wrap: wrap, canvas: canvas,
+        no: i, wrap: wrap, canvas: null,
         renderedScale: 0, rendering: false,
         w: pdfState.baseW, h: pdfState.baseH, page: null
       });
     }
 
     setPdfPageLabel(1, doc.numPages);
+    pdfState.offsets = null;
+    recomputePageOffsets();
     observePages();
     renderPageAt(0);
     renderPageAt(1);
@@ -2078,6 +2084,10 @@
       if (Math.abs(pdfState.scale - s) > 0.001) return;
       var vp = page.getViewport({ scale: s });
       var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      if (!p.canvas) {
+        p.canvas = document.createElement('canvas');
+        p.wrap.appendChild(p.canvas);
+      }
       var canvas = p.canvas;
       canvas.width = Math.max(1, Math.floor(vp.width * dpr));
       canvas.height = Math.max(1, Math.floor(vp.height * dpr));
@@ -2098,6 +2108,7 @@
       console.warn('render page failed', p.no, e);
     } finally {
       p.rendering = false;
+      releaseFarPages(Math.max(0, (pdfState.current || 1) - 1));
     }
   }
 
@@ -2118,6 +2129,8 @@
       stage.scrollTop += (offsetAfter - offsetBefore);
     }
 
+    pdfState.offsets = null;
+    recomputePageOffsets();
     refreshVisiblePages();
     renderTransOverlays();
     onPdfScroll();
@@ -2133,19 +2146,52 @@
     });
   }
 
+  var pdfScrollRaf = 0;
+
+  function recomputePageOffsets() {
+    pdfState.offsets = pdfState.pages.map(function (p) { return p.wrap.offsetTop; });
+  }
+
   function onPdfScroll() {
     if (!pdfState.doc || !pdfState.pages.length) return;
-    var stage = $('#pdfStage');
-    var mid = stage.scrollTop + stage.clientHeight * 0.3;
-    var best = 1;
-    for (var i = 0; i < pdfState.pages.length; i++) {
-      var p = pdfState.pages[i];
-      if (p.wrap.offsetTop <= mid) best = p.no;
-      else break;
-    }
-    pdfState.current = best;
-    setPdfPageLabel(best, pdfState.doc.numPages);
-    savePdfSession();
+    if (pdfScrollRaf) return;
+    pdfScrollRaf = requestAnimationFrame(function () {
+      pdfScrollRaf = 0;
+      if (!pdfState.doc || !pdfState.pages.length) return;
+      var stage = $('#pdfStage');
+      var mid = stage.scrollTop + stage.clientHeight * 0.3;
+      if (!pdfState.offsets || pdfState.offsets.length !== pdfState.pages.length) {
+        recomputePageOffsets();
+      }
+      var arr = pdfState.offsets;
+      var lo = 0;
+      var hi = arr.length - 1;
+      var best = 0;
+      while (lo <= hi) {
+        var m = (lo + hi) >> 1;
+        if (arr[m] <= mid) { best = m; lo = m + 1; }
+        else { hi = m - 1; }
+      }
+      var no = best + 1;
+      pdfState.current = no;
+      setPdfPageLabel(no, pdfState.doc.numPages);
+      savePdfSession();
+    });
+  }
+
+  /** 释放离当前页较远的 canvas，控制内存 */
+  function releaseFarPages(curIdx) {
+    if (!pdfState.pages) return;
+    var keep = 4;
+    pdfState.pages.forEach(function (p, i) {
+      if (Math.abs(i - curIdx) <= keep) return;
+      if (!p.canvas || p.rendering) return;
+      p.canvas.width = 0;
+      p.canvas.height = 0;
+      if (p.canvas.parentNode) p.canvas.parentNode.removeChild(p.canvas);
+      p.canvas = null;
+      p.renderedScale = 0;
+    });
   }
 
   function pdfZoom(dir) {
@@ -2306,9 +2352,23 @@
     var token = ++outlineSeq;
     body.innerHTML = '';
 
-    // ---------- 菜单一：已加载的 PDF ----------
+    // ---------- 菜单一：已加载的 PDF（可折叠） ----------
     var fileList = document.createElement('div');
     fileList.className = 'po-list';
+
+    var listSec = document.createElement('div');
+    listSec.className = 'po-sec';
+    var listHead = document.createElement('button');
+    listHead.className = 'po-sec-head' + (pdfState.listOpen ? ' open' : '');
+    listHead.innerHTML = '<svg class="ico sm po-sec-chev"><use href="#i-chev"/></svg>' +
+      '<span>已加载的 PDF（' + pdfState.library.length + '）</span>' +
+      '<span class="po-sec-cur">' + esc(pdfState.name || '') + '</span>';
+    listHead.addEventListener('click', function () {
+      pdfState.listOpen = !pdfState.listOpen;
+      buildOutline();
+    });
+    listSec.appendChild(listHead);
+    body.appendChild(listSec);
 
     if (!pdfState.library.length) {
       var tip = document.createElement('div');
@@ -2347,7 +2407,7 @@
         fileList.appendChild(btn);
       });
     }
-    body.appendChild(poSection('已加载的 PDF（' + pdfState.library.length + '）', fileList));
+    if (pdfState.listOpen) listSec.appendChild(fileList);
 
     // ---------- 菜单二：当前 PDF 的目录 ----------
     var curList = document.createElement('div');
@@ -2359,8 +2419,12 @@
       t0.textContent = '上面点一个 PDF 打开后，这里显示它的目录';
       curList.appendChild(t0);
     } else {
-      var outline = null;
-      try { outline = await pdfState.doc.getOutline(); } catch (e) { outline = null; }
+      var outline = pdfState.outlineCache[pdfState.curId || pdfState.name || ''];
+      if (!outline) {
+        try { outline = await pdfState.doc.getOutline(); } catch (e) { outline = null; }
+        outline = outline || [];
+        pdfState.outlineCache[pdfState.curId || pdfState.name || ''] = outline;
+      }
       if (token !== outlineSeq) return;
       if (outline && outline.length) {
         outlineItemsFlat = [];
