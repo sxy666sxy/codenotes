@@ -1039,3 +1039,32 @@ body.tab-pdf .notes-panel { display: none !important; }
   .set-brand-row { padding: 10px 14px; }
   .set-brand-row img { width: 30px; height: 30px; }
 }
+
+/* 导入进度卡片 */
+.progress {
+  position: fixed; z-index: 90;
+  left: 50%; top: 62px; transform: translateX(-50%);
+  width: min(340px, 88vw);
+  padding: 12px 14px;
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 12px 38px rgba(0, 0, 0, .22);
+}
+.pg-line {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  font-size: 12.5px; margin-bottom: 8px;
+}
+.pg-line b { font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--accent); }
+.pg-bar {
+  height: 6px; border-radius: 4px; overflow: hidden;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+.pg-bar i {
+  display: block; height: 100%; width: 0;
+  border-radius: 4px; background: var(--accent);
+  transition: width .18s ease;
+}
+.pg-eta { margin-top: 6px; font-size: 11px; color: var(--muted); min-height: 14px; }
+@media (max-width: 880px) {
+  .progress { top: calc(var(--inset-top, 0px) + 54px); }
+}

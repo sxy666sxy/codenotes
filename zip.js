@@ -127,8 +127,26 @@
    * 读取 zip 中的所有文件
    * @returns {Promise<{entries: Array, skipped: number, skippedSize: number}>}
    */
+  /** 分块读入整个文件，边读边报进度（大文件也能看到百分比） */
+  async function readWholeFile(file, onProgress) {
+    var CHUNK = 4 * 1024 * 1024;
+    var out = new Uint8Array(file.size);
+    var off = 0;
+    while (off < file.size) {
+      var end = Math.min(off + CHUNK, file.size);
+      var part = new Uint8Array(await file.slice(off, end).arrayBuffer());
+      out.set(part, off);
+      off = end;
+      if (onProgress) onProgress(off, file.size);
+      await new Promise(function (r) { setTimeout(r, 0); });
+    }
+    return out;
+  }
+
   async function readZip(file, onProgress) {
-    var buf = new Uint8Array(await file.arrayBuffer());
+    var buf = await readWholeFile(file, function (done, total) {
+      if (onProgress) onProgress({ phase: 'read', done: done, total: total });
+    });
     var dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
 
     var eocd = findEocd(dv, buf.length);
@@ -203,8 +221,8 @@
       } catch (err) {
         skipped++;
       }
-      if (onProgress && (k % 5 === 0 || k === metas.length - 1)) {
-        onProgress(k + 1, metas.length);
+      if (onProgress && (k % 3 === 0 || k === metas.length - 1)) {
+        onProgress({ phase: 'extract', done: k + 1, total: metas.length });
         await new Promise(function (r) { setTimeout(r, 0); });
       }
     }

@@ -61,6 +61,10 @@
           <svg class="ico sm"><use href="#i-folder"/></svg>
           <span><b>文件夹</b><em>直接读取整个目录</em></span>
         </button>
+        <button class="menu-item" id="btnImportNew" role="menuitem">
+          <svg class="ico sm"><use href="#i-plus"/></svg>
+          <span><b>新项目（替换当前）</b><em>清空已加载的文件，重新开始</em></span>
+        </button>
       </div>
     </div>
 
@@ -296,6 +300,12 @@
   <div class="busy" id="busy" hidden>
     <div class="spinner"></div>
     <div id="busyText">处理中…</div>
+  </div>
+
+  <div class="progress" id="progress" hidden>
+    <div class="pg-line"><span id="pgText">正在导入…</span><b id="pgPct">0%</b></div>
+    <div class="pg-bar"><i id="pgFill"></i></div>
+    <div class="pg-eta" id="pgEta"></div>
   </div>
 
   <div class="modal" id="modal" hidden>

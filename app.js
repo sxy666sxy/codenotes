@@ -68,7 +68,7 @@
 
   var esc = function (s) { return HL.escape(String(s == null ? '' : s)); };
 
-  var APP_VERSION = '1.4.5';
+  var APP_VERSION = '1.4.9';
   var AI_PRESETS = [
     { id: 'deepseek', name: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
     { id: 'openai', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
@@ -87,6 +87,7 @@
   ------------------------------------------------------------ */
   var store = loadStore();
 
+  var importReplace = false;
   var state = {
     highlightRules: [],
     project: null,
@@ -266,6 +267,41 @@
 
   function idle() { $('#busy').hidden = true; }
 
+  function fmtDur(ms) {
+    var sec = Math.max(0, Math.round(ms / 1000));
+    if (sec < 60) return sec + ' 秒';
+    var m = Math.floor(sec / 60);
+    var r = sec % 60;
+    return m + ' 分' + (r ? ' ' + r + ' 秒' : '');
+  }
+
+  function showProgress(text) {
+    var el = $('#progress');
+    if (!el) return;
+    el.hidden = false;
+    $('#pgText').textContent = text || '正在导入…';
+    $('#pgFill').style.width = '0%';
+    $('#pgPct').textContent = '0%';
+    $('#pgEta').textContent = '';
+  }
+
+  function setProgress(pct, text, etaMs) {
+    var el = $('#progress');
+    if (!el || el.hidden) return;
+    pct = Math.max(0, Math.min(100, pct));
+    $('#pgFill').style.width = pct.toFixed(1) + '%';
+    $('#pgPct').textContent = Math.round(pct) + '%';
+    if (text) $('#pgText').textContent = text;
+    $('#pgEta').textContent = (etaMs != null && isFinite(etaMs) && etaMs > 600)
+      ? '预计剩余 ' + fmtDur(etaMs)
+      : '';
+  }
+
+  function hideProgress() {
+    var el = $('#progress');
+    if (el) el.hidden = true;
+  }
+
   function extOf(name) {
     var special = { Makefile: 'mk', Dockerfile: 'df', LICENSE: 'txt', '.gitignore': 'git', '.env': 'env' };
     if (special[name]) return special[name];
@@ -335,21 +371,50 @@
   /* ------------------------------------------------------------
      导入
   ------------------------------------------------------------ */
-  async function importFile(file) {
+  async function importFile(file, opts) {
     if (!file) return;
+    opts = opts || {};
     if (file.size > 90 * 1024 * 1024) {
       toast('文件太大了（超过 90MB），请拆分后再导入');
       return;
     }
-    busy('正在读取 ' + file.name + '…');
+
+    var mergeMode = !!state.project && !opts.replace;
     var t0 = performance.now();
+    var extractStart = 0;
+    showProgress('正在读取 ' + file.name + '…');
     try {
-      var proj = await ZipReader.readAny(file, function (i, total) {
-        busy('正在解压… ' + i + ' / ' + total);
+      var proj = await ZipReader.readAny(file, function (ev) {
+        if (!ev || !ev.phase) return;
+        if (ev.phase === 'read') {
+          setProgress(ev.total ? (ev.done / ev.total) * 25 : 0, '正在读取压缩包…');
+        } else {
+          if (!extractStart) extractStart = performance.now();
+          var ratio = ev.done / Math.max(1, ev.total);
+          var eta = null;
+          if (ev.done > 2 && extractStart) {
+            eta = (performance.now() - extractStart) / ev.done * (ev.total - ev.done);
+          }
+          setProgress(25 + ratio * 65, '正在解压… ' + ev.done + ' / ' + ev.total, eta);
+        }
       });
-      busy('正在生成目录…');
-      await new Promise(function (r) { setTimeout(r, 40); });
+      setProgress(93, mergeMode ? '正在合并到当前项目…' : '正在生成目录…');
+      await new Promise(function (r) { setTimeout(r, 30); });
+
+      if (mergeMode) {
+        var merged = mergeIntoProject(proj);
+        setProgress(100, '完成');
+        var msM = Math.round(performance.now() - t0);
+        toast('已合并到当前项目：新增 ' + merged.added + ' 个' +
+          (merged.replaced ? '，覆盖 ' + merged.replaced + ' 个' : '') + ' · ' + msM + 'ms');
+        renderTree();
+        if (state.current) openFile(state.current);
+        rememberProject(file);
+        return;
+      }
+
       loadProject(proj);
+      setProgress(100, '完成');
       rememberProject(file);
       var ms = Math.round(performance.now() - t0);
       toast('已导入 ' + proj.entries.length + ' 个文件' +
@@ -358,8 +423,54 @@
       console.error(err);
       toast((err && err.message) || '导入失败');
     } finally {
+      setTimeout(hideProgress, 380);
       idle();
     }
+  }
+
+  /** 把新导入的文件合并进当前项目，保留已有文件和注释 */
+  function mergeIntoProject(proj) {
+    var oldSig = state.sig;
+    var oldCurrent = state.current;
+    var byPath = new Map();
+    state.project.entries.forEach(function (e) { byPath.set(e.path, e); });
+
+    var added = 0;
+    var replaced = 0;
+    proj.entries.forEach(function (e) {
+      if (byPath.has(e.path)) {
+        byPath.set(e.path, e);
+        replaced++;
+      } else {
+        byPath.set(e.path, e);
+        added++;
+      }
+    });
+
+    var entries = Array.from(byPath.values()).sort(function (a, b) {
+      return a.path.localeCompare(b.path, 'zh-Hans-CN', { numeric: true });
+    });
+
+    state.project.entries = entries;
+    state.project.byPath = byPath;
+    state.project.tree = buildTree(entries);
+    state.project.textCache = new Map();
+    state.sig = signature(state.project.name, entries);
+
+    // 注释按项目签名分桶：合并后签名变了，把旧桶迁过去，注释不丢
+    if (oldSig && oldSig !== state.sig && store.projects[oldSig] && !store.projects[state.sig]) {
+      store.projects[state.sig] = store.projects[oldSig];
+    }
+
+    var bucket = ensureBucket();
+    state.expanded = new Set(bucket.expanded || []);
+    state.treeNotes = Object.assign({}, bucket.treeNotes || {});
+    if (!state.expanded.size) expandDefault(state.project.tree);
+
+    renderProjectCard();
+    renderNoteStat();
+    saveStore();
+    return { added: added, replaced: replaced, kept: oldCurrent };
   }
 
   function rememberProject(file) {
@@ -2572,11 +2683,12 @@
   async function importDirectory(fileList) {
     var files = Array.prototype.slice.call(fileList || []);
     if (!files.length) return;
-    busy('正在读取文件夹…');
+    showProgress('正在读取文件夹…');
     try {
       var entries = [];
       var skipped = 0;
       var total = 0;
+      var fileStart = performance.now();
       var root = ((files[0].webkitRelativePath || '').split('/')[0]) || '文件夹';
 
       for (var i = 0; i < files.length; i++) {
@@ -2590,18 +2702,34 @@
         var data = new Uint8Array(await f.arrayBuffer());
         total += data.length;
         entries.push({ path: path, size: data.length, data: data });
-        if (i % 6 === 0) busy('正在读取… ' + (i + 1) + ' / ' + files.length);
+        if (i % 6 === 0 || i === files.length - 1) {
+          setProgress(25 + (i + 1) / files.length * 65,
+            '正在读取… ' + (i + 1) + ' / ' + files.length,
+            fileStart ? (performance.now() - fileStart) / (i + 1) * (files.length - i - 1) : null);
+        }
       }
 
       if (!entries.length) throw new Error('这个文件夹里没有可读取的文件');
       var flat = !files.some(function (f) { return !!f.webkitRelativePath; });
-      loadProject({ name: root, isZip: false, entries: entries, skipped: skipped });
-      toast('已导入「' + root + '」· ' + entries.length + ' 个文件' +
-        (flat ? '（系统没返回目录结构）' : '') + (skipped ? '，跳过 ' + skipped + ' 个' : ''));
+      var pack = { name: root, isZip: false, entries: entries, skipped: skipped };
+
+      if (state.project && !importReplace) {
+        var m = mergeIntoProject(pack);
+        renderTree();
+        if (state.current) openFile(state.current);
+        toast('已合并「' + root + '」：新增 ' + m.added + ' 个' +
+          (m.replaced ? '，覆盖 ' + m.replaced + ' 个' : ''));
+      } else {
+        loadProject(pack);
+        toast('已导入「' + root + '」· ' + entries.length + ' 个文件' +
+          (flat ? '（系统没返回目录结构）' : '') + (skipped ? '，跳过 ' + skipped + ' 个' : ''));
+      }
+      setProgress(100, '完成');
     } catch (err) {
       console.error(err);
       toast((err && err.message) || '读取文件夹失败');
     } finally {
+      setTimeout(hideProgress, 380);
       idle();
     }
   }
@@ -2896,6 +3024,9 @@
       '<h4>一、导入</h4>',
       '<ul>',
       '<li>顶栏 <b>上传图标</b>：导入压缩包（.zip）或直接选文件夹（安卓用系统目录选择器，保留完整目录结构）</li>',
+      '<li>已经有项目时再导入会<b>追加合并</b>到当前项目：新文件加进来、同名文件覆盖，<b>已加载的文件和注释都保留</b></li>',
+      '<li>想从头开始，用菜单里的「<b>新项目（替换当前）</b>」</li>',
+      '<li>导入过程会显示<b>百分比和预计剩余时间</b></li>',
       '<li>顶栏 <b>PDF 图标</b>：选单个 PDF，或导入「内含 PDF 的压缩包」</li>',
       '<li>记事本模式：任何文件都按原样显示，乱码也照实显示，不跳过</li>',
       '</ul>',
@@ -3425,11 +3556,18 @@
     });
     $('#btnImportZip').addEventListener('click', function () {
       $('#importMenu').hidden = true;
+      importReplace = false;
       $('#fileInput').click();
     });
     $('#btnImportDir').addEventListener('click', function () {
       $('#importMenu').hidden = true;
+      importReplace = false;
       pickFolder();
+    });
+    $('#btnImportNew').addEventListener('click', function () {
+      $('#importMenu').hidden = true;
+      importReplace = true;
+      $('#fileInput').click();
     });
     document.addEventListener('click', function (e) {
       if (!$('#importMenu').hidden && !e.target.closest('#importWrap')) $('#importMenu').hidden = true;
@@ -3512,7 +3650,9 @@
     $('#fileInput').addEventListener('change', function (e) {
       var f = e.target.files && e.target.files[0];
       e.target.value = '';
-      if (f) importFile(f);
+      var rep = importReplace;
+      importReplace = false;
+      if (f) importFile(f, { replace: rep });
     });
 
     $('#btnFind').addEventListener('click', function () {
