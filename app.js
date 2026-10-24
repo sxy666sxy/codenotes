@@ -68,7 +68,7 @@
 
   var esc = function (s) { return HL.escape(String(s == null ? '' : s)); };
 
-  var APP_VERSION = '1.4.9';
+  var APP_VERSION = '1.5.0';
   var AI_PRESETS = [
     { id: 'deepseek', name: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
     { id: 'openai', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
@@ -79,7 +79,7 @@
     { id: 'custom', name: '自定义（OpenAI 兼容）', baseURL: '', model: '' }
   ];
   var LS_KEY = 'codenotes.v1';
-  var MAX_PREVIEW = 8 * 1024 * 1024;   // 单个文本文件预览上限（字符）
+  var MAX_PREVIEW = 32 * 1024 * 1024;  // 单个文本文件预览上限（字符）
   var MAX_LINE_CHARS = 4000;           // 单行显示上限（压缩代码常常几百万字符一行）
 
   /* ------------------------------------------------------------
@@ -88,6 +88,7 @@
   var store = loadStore();
 
   var importReplace = false;
+  var openSeq = 0;
   var state = {
     highlightRules: [],
     project: null,
@@ -371,13 +372,45 @@
   /* ------------------------------------------------------------
      导入
   ------------------------------------------------------------ */
+  async function getEntryBytes(entry) {
+    if (entry.data) return entry.data;
+    if (entry._zip) {
+      entry.data = await ZipReader.readEntry(entry._zip.file, entry._zip);
+      return entry.data;
+    }
+    if (entry._file) {
+      entry.data = new Uint8Array(await entry._file.arrayBuffer());
+      return entry.data;
+    }
+    if (entry._url) {
+      var resp = await fetch(entry._url);
+      if (!resp.ok) throw new Error('读取文件失败（HTTP ' + resp.status + '）');
+      entry.data = new Uint8Array(await resp.arrayBuffer());
+      return entry.data;
+    }
+    return new Uint8Array(0);
+  }
+
+  function hexPreview(bytes, max) {
+    var n = Math.min(bytes.length, max || 2048);
+    var lines = [];
+    for (var i = 0; i < n; i += 16) {
+      var hex = [];
+      var ascii = '';
+      for (var j = 0; j < 16; j++) {
+        var b = bytes[i + j];
+        if (b === undefined) { hex.push('  '); continue; }
+        hex.push((b < 16 ? '0' : '') + b.toString(16));
+        ascii += (b >= 32 && b < 127) ? String.fromCharCode(b) : '.';
+      }
+      lines.push(('0000000' + i.toString(16)).slice(-6) + '  ' + hex.join(' ') + '  ' + ascii);
+    }
+    return lines.join('\n');
+  }
+
   async function importFile(file, opts) {
     if (!file) return;
     opts = opts || {};
-    if (file.size > 90 * 1024 * 1024) {
-      toast('文件太大了（超过 90MB），请拆分后再导入');
-      return;
-    }
 
     var mergeMode = !!state.project && !opts.replace;
     var t0 = performance.now();
@@ -386,17 +419,13 @@
     try {
       var proj = await ZipReader.readAny(file, function (ev) {
         if (!ev || !ev.phase) return;
-        if (ev.phase === 'read') {
-          setProgress(ev.total ? (ev.done / ev.total) * 25 : 0, '正在读取压缩包…');
-        } else {
-          if (!extractStart) extractStart = performance.now();
-          var ratio = ev.done / Math.max(1, ev.total);
-          var eta = null;
-          if (ev.done > 2 && extractStart) {
-            eta = (performance.now() - extractStart) / ev.done * (ev.total - ev.done);
-          }
-          setProgress(25 + ratio * 65, '正在解压… ' + ev.done + ' / ' + ev.total, eta);
+        if (!extractStart) extractStart = performance.now();
+        var ratio = ev.done / Math.max(1, ev.total);
+        var eta = null;
+        if (ev.done > 20 && extractStart) {
+          eta = (performance.now() - extractStart) / ev.done * (ev.total - ev.done);
         }
+        setProgress(ratio * 90, '正在解析文件目录… ' + ev.done + ' / ' + ev.total, eta);
       });
       setProgress(93, mergeMode ? '正在合并到当前项目…' : '正在生成目录…');
       await new Promise(function (r) { setTimeout(r, 30); });
@@ -824,7 +853,7 @@
   /* ------------------------------------------------------------
      打开文件
   ------------------------------------------------------------ */
-  function openFile(path) {
+  async function openFile(path) {
     var entry = state.project && state.project.byPath.get(path);
     if (!entry) return;
 
@@ -835,10 +864,12 @@
 
     if (document.body.classList.contains('tab-pdf')) setTab('code');
 
+    var openToken = ++openSeq;
     flushComposer();
 
     state.current = path;
     state.binary = false;
+    state.hex = '';
     state.notice = '';
     state.truncated = false;
     state.modified = false;
@@ -859,19 +890,32 @@
       text = rec.content;
       enc = '本地修改';
       state.modified = true;
-    } else if (entry.size > 24 * 1024 * 1024) {
-      state.binary = true;
-      state.notice = '文件超过 24MB，暂不载入预览。你仍然可以为它写整体注释。';
     } else {
       var cached = state.project.textCache.get(path);
       if (cached) {
         text = cached.text;
         enc = cached.enc;
       } else {
-        var dec = ZipReader.decodeText(entry.data);
-        text = dec.text;
-        enc = dec.enc;
-        state.project.textCache.set(path, dec);
+        var bytes;
+        try {
+          bytes = await getEntryBytes(entry);
+        } catch (err) {
+          toast('读取失败：' + ((err && err.message) || ''));
+          return;
+        }
+        if (openToken !== openSeq) return;
+
+        if (ZipReader.isBinary(bytes)) {
+          state.binary = true;
+          state.binaryLen = bytes.length;
+          state.notice = '二进制文件 · ' + fmtSize(bytes.length) + '｜仍可写整体注释';
+          state.hex = hexPreview(bytes, 4096);
+        } else {
+          var dec = ZipReader.decodeText(bytes);
+          text = dec.text;
+          enc = dec.enc;
+          state.project.textCache.set(path, dec);
+        }
       }
     }
 
@@ -965,7 +1009,8 @@
     if (state.moreIO) { state.moreIO.disconnect(); state.moreIO = null; }
 
     if (state.binary) {
-      host.innerHTML = '<div class="binary-note">' + esc(state.notice) + '</div>';
+      host.innerHTML = '<div class="binary-note">' + esc(state.notice) + '</div>' +
+        (state.hex ? '<div class="hexdump">' + esc(state.hex) + '</div>' : '');
       updateFoot();
       return;
     }
@@ -1370,19 +1415,20 @@
   /* ------------------------------------------------------------
      导出
   ------------------------------------------------------------ */
-  function textOf(path) {
+  async function textOf(path) {
     var rec = getRec(path);
     if (rec && typeof rec.content === 'string') return rec.content;
     var cached = state.project.textCache.get(path);
     if (cached) return cached.text;
     var entry = state.project.byPath.get(path);
     if (!entry) return '';
-    var dec = ZipReader.decodeText(entry.data);
+    var bytes = await getEntryBytes(entry);
+    var dec = ZipReader.decodeText(bytes);
     state.project.textCache.set(path, dec);
     return dec.text;
   }
 
-  function buildMarkdown() {
+  async function buildMarkdown() {
     var bucket = ensureBucket();
     var out = [];
     var fileCount = 0;
@@ -1393,7 +1439,9 @@
     out.push('> 导出时间：' + new Date().toLocaleString('zh-CN'));
     out.push('');
 
-    Object.keys(bucket.notes).sort().forEach(function (path) {
+    var _paths = Object.keys(bucket.notes).sort();
+    for (var _pi = 0; _pi < _paths.length; _pi++) {
+      var path = _paths[_pi];
       var rec = bucket.notes[path];
       var lineKeys = rec.lines ? Object.keys(rec.lines).sort(function (a, b) { return a - b; }) : [];
       if (!rec.file && !lineKeys.length) return;
@@ -1405,19 +1453,19 @@
         out.push('> ' + String(rec.file).replace(/\n/g, '\n> '));
       }
       var src = null;
+      if (lineKeys.length) {
+        try { src = (await textOf(path)).split(/\r\n|\n|\r/); } catch (e) { src = []; }
+      }
       lineKeys.forEach(function (ln) {
         noteCount++;
-        if (!src) {
-          try { src = textOf(path).split(/\r\n|\n|\r/); } catch (e) { src = []; }
-        }
-        var code = (src[Number(ln) - 1] || '').trim();
+        var code = ((src && src[Number(ln) - 1]) || '').trim();
         if (code.length > 120) code = code.slice(0, 120) + '…';
         out.push('');
         out.push('- **L' + ln + '**' + (code ? ' `' + code.replace(/`/g, '\\`') + '`' : ''));
         out.push('  ' + String(rec.lines[ln]).replace(/\n/g, '\n  '));
       });
       out.push('');
-    });
+    }
 
     if (!fileCount) return '';
     out.push('---');
@@ -1426,9 +1474,11 @@
     return out.join('\n');
   }
 
-  function exportNotes() {
+  async function exportNotes() {
     if (!state.project) { toast('还没有导入项目'); return; }
-    var md = buildMarkdown();
+    var md;
+    try { md = await buildMarkdown(); }
+    catch (e) { toast('导出失败：' + ((e && e.message) || '')); return; }
     if (!md) { toast('这个项目还没有任何注释'); return; }
 
     openModal('导出注释', '<p>已整理成本地注释文件。可以复制到剪贴板，或下载为 .md 文件。</p>' +
@@ -1595,7 +1645,7 @@
     return Math.sqrt(dx * dx + dy * dy) || 1;
   }
 
-  function openPdfFromProject(path) {
+  async function openPdfFromProject(path) {
     if (!state.project) return;
     var entry = state.project.byPath.get(path);
     if (!entry) return;
@@ -1603,7 +1653,18 @@
     pdfState.zipPdfs = [];
     highlightRow(path);
     if (isMobile()) setSidebar(false, false);
-    openPdfData(new Uint8Array(entry.data), path.split('/').pop());
+    busy('正在读取 PDF…');
+    try {
+      var bytes = await getEntryBytes(entry);
+      await openPdfData(new Uint8Array(bytes), path.split('/').pop());
+    } catch (err) {
+      setTab('code');
+      $('#welcome').hidden = false;
+      $('#editor').hidden = true;
+      toast('打开 PDF 失败：' + ((err && err.message) || ''));
+    } finally {
+      idle();
+    }
   }
 
   function openPdfFile(file) {
@@ -1625,9 +1686,10 @@
       var pdfs = res.entries.filter(function (e) { return /\.pdf$/i.test(e.path); });
       if (!pdfs.length) throw new Error('压缩包里没有 PDF 文件');
       pdfState.zipPdfs = pdfs.map(function (e) {
-        return { name: e.path.split('/').pop(), path: e.path, data: new Uint8Array(e.data) };
+        return { name: e.path.split('/').pop(), path: e.path, entry: e };
       });
-      await openPdfData(new Uint8Array(pdfs[0].data), pdfs[0].path.split('/').pop());
+      var firstPdfBytes = await getEntryBytes(pdfs[0]);
+      await openPdfData(new Uint8Array(firstPdfBytes), pdfs[0].path.split('/').pop());
       setPdfOutline(true);
       if (pdfs.length > 1) toast('压缩包里有 ' + pdfs.length + ' 个 PDF，右侧目录可切换');
     } catch (err) {
@@ -1986,7 +2048,12 @@
         btn.textContent = item.path || item.name;
         btn.title = item.path || item.name;
         btn.addEventListener('click', function () {
-          openPdfData(new Uint8Array(item.data), item.name);
+          busy('正在读取 PDF…');
+          getEntryBytes(item.entry).then(function (bytes) {
+            return openPdfData(new Uint8Array(bytes), item.name);
+          }).catch(function (err) {
+            toast('打开失败：' + ((err && err.message) || ''));
+          }).then(function () { idle(); });
         });
         list.appendChild(btn);
       });
@@ -2660,18 +2727,40 @@
       var entries = [];
       var skipped = 0;
       var list = res.files || [];
+      var canUrl = res.copy && res.root && window.Capacitor && window.Capacitor.convertFileSrc;
+
       for (var i = 0; i < list.length; i++) {
         var f = list[i];
         if (isSkippedPath(f.p)) { skipped++; continue; }
-        var bytes = base64ToBytes(f.d);
-        if (!bytes.length) { skipped++; continue; }
-        entries.push({ path: f.p, size: bytes.length, data: bytes });
-        if (i % 20 === 0) busy('正在解析… ' + (i + 1) + ' / ' + list.length);
+
+        if (canUrl) {
+          // 复制到缓存后按需读取：文件多大都不占内存
+          var seg = f.p.split('/').map(encodeURIComponent).join('/');
+          entries.push({
+            path: f.p,
+            size: f.s || 0,
+            _url: window.Capacitor.convertFileSrc(res.root + '/' + seg)
+          });
+        } else if (f.d) {
+          var bytes = base64ToBytes(f.d);
+          if (!bytes.length) { skipped++; continue; }
+          entries.push({ path: f.p, size: bytes.length, data: bytes });
+        }
+        if (i % 20 === 0) busy('正在建立目录… ' + (i + 1) + ' / ' + list.length);
       }
       if (!entries.length) throw new Error('文件夹里没有可读取的文件');
-      loadProject({ name: res.name || '文件夹', isZip: false, entries: entries, skipped: skipped });
-      toast('已导入文件夹「' + (res.name || '') + '」· ' + entries.length + ' 个文件' +
-        (res.truncated ? '（内容过多已截断）' : ''));
+
+      var pack = { name: res.name || '文件夹', isZip: false, entries: entries, skipped: skipped };
+      if (state.project && !importReplace) {
+        var m = mergeIntoProject(pack);
+        renderTree();
+        if (state.current) openFile(state.current);
+        toast('已合并「' + (res.name || '') + '」：新增 ' + m.added + ' 个' +
+          (m.replaced ? '，覆盖 ' + m.replaced + ' 个' : ''));
+      } else {
+        loadProject(pack);
+        toast('已导入文件夹「' + (res.name || '') + '」· ' + entries.length + ' 个文件');
+      }
     } catch (err) {
       var msg = String((err && err.message) || err || '');
       if (msg.indexOf('cancel') < 0) toast('读取文件夹失败：' + msg);
@@ -2696,15 +2785,13 @@
         var rel = f.webkitRelativePath || f.name;
         var path = rel.indexOf('/') >= 0 ? rel.split('/').slice(1).join('/') : rel;
         if (!path) continue;
-        if (isSkippedPath(path) || f.size > 40 * 1024 * 1024) { skipped++; continue; }
-        if (total + f.size > 80 * 1024 * 1024) { skipped++; continue; }
+        if (isSkippedPath(path)) { skipped++; continue; }
 
-        var data = new Uint8Array(await f.arrayBuffer());
-        total += data.length;
-        entries.push({ path: path, size: data.length, data: data });
-        if (i % 6 === 0 || i === files.length - 1) {
-          setProgress(25 + (i + 1) / files.length * 65,
-            '正在读取… ' + (i + 1) + ' / ' + files.length,
+        // 懒加载：只记下 File 句柄，打开时再读内容，多大都不怕
+        entries.push({ path: path, size: f.size, _file: f });
+        if (i % 20 === 0 || i === files.length - 1) {
+          setProgress(20 + (i + 1) / files.length * 70,
+            '正在建立目录… ' + (i + 1) + ' / ' + files.length,
             fileStart ? (performance.now() - fileStart) / (i + 1) * (files.length - i - 1) : null);
         }
       }
@@ -3028,7 +3115,8 @@
       '<li>想从头开始，用菜单里的「<b>新项目（替换当前）</b>」</li>',
       '<li>导入过程会显示<b>百分比和预计剩余时间</b></li>',
       '<li>顶栏 <b>PDF 图标</b>：选单个 PDF，或导入「内含 PDF 的压缩包」</li>',
-      '<li>记事本模式：任何文件都按原样显示，乱码也照实显示，不跳过</li>',
+      '<li><b>不设大小上限</b>：压缩包只解析目录，文件在你点开时才读取解压，所以几 GB 的包也能导入</li>',
+      '<li>记事本模式：任何类型都打开——文本照实显示，二进制显示十六进制预览，乱码也照实显示</li>',
       '</ul>',
 
       '<h4>二、代码阅读与注释</h4>',

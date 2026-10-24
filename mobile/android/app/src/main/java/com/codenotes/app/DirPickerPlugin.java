@@ -14,6 +14,8 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -127,20 +129,90 @@ public class DirPickerPlugin extends Plugin {
                     return;
                 }
                 String name = root.getName() != null ? root.getName() : "文件夹";
+
+                // 把文件复制到应用缓存目录，网页层按需读取（不再走 base64，大小不限）
+                File base = new File(getContext().getCacheDir(), "import");
+                deleteRecursive(base);
+                if (!base.exists() && !base.mkdirs()) {
+                    call.reject("无法创建缓存目录");
+                    return;
+                }
                 JSArray files = new JSArray();
                 long[] total = { 0 };
                 int[] count = { 0 };
-                walk(root, "", files, total, count);
+                walkCopy(base, root, "", files, total, count);
 
                 JSObject res = new JSObject();
                 res.put("name", name);
                 res.put("files", files);
-                res.put("truncated", total[0] >= MAX_TOTAL || count[0] >= MAX_FILES);
+                res.put("root", base.getAbsolutePath());
+                res.put("copy", true);
+                res.put("truncated", false);
                 call.resolve(res);
             } catch (Exception e) {
                 call.reject(e.getMessage() == null ? "读取目录失败" : e.getMessage());
             }
         }).start();
+    }
+
+    private void walkCopy(File base, DocumentFile dir, String prefix, JSArray out, long[] total, int[] count) {
+        DocumentFile[] children;
+        try {
+            children = dir.listFiles();
+        } catch (Exception e) {
+            return;
+        }
+        if (children == null) return;
+
+        for (DocumentFile f : children) {
+            String name;
+            try {
+                name = f.getName();
+            } catch (Exception e) {
+                continue;
+            }
+            if (name == null || name.startsWith(".")) continue;
+
+            String path = prefix.isEmpty() ? name : prefix + "/" + name;
+            if (f.isDirectory()) {
+                walkCopy(base, f, path, out, total, count);
+                continue;
+            }
+
+            File dest = new File(base, path);
+            File parent = dest.getParentFile();
+            if (parent != null) parent.mkdirs();
+            try (InputStream in = getContext().getContentResolver().openInputStream(f.getUri());
+                 OutputStream os = new FileOutputStream(dest)) {
+                if (in == null) {
+                    dest.delete();
+                    continue;
+                }
+                byte[] chunk = new byte[64 * 1024];
+                int n;
+                while ((n = in.read(chunk)) > 0) os.write(chunk, 0, n);
+                os.flush();
+            } catch (Exception e) {
+                dest.delete();
+                continue;
+            }
+
+            total[0] += dest.length();
+            count[0]++;
+            JSObject o = new JSObject();
+            o.put("p", path);
+            o.put("s", dest.length());
+            out.put(o);
+        }
+    }
+
+    private void deleteRecursive(File f) {
+        if (f == null || !f.exists()) return;
+        if (f.isDirectory()) {
+            File[] kids = f.listFiles();
+            if (kids != null) for (File k : kids) deleteRecursive(k);
+        }
+        f.delete();
     }
 
     private void walk(DocumentFile dir, String prefix, JSArray out, long[] total, int[] count) {

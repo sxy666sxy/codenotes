@@ -1,5 +1,10 @@
 /* ============================================================
    zip.js · 零依赖 ZIP 读取（基于浏览器原生 DecompressionStream）
+
+   设计目标：不设大小上限。
+   - 导入时只读「目录区」，几百 MB 的包也是瞬间完成
+   - 每个文件在真正打开时才读那一段字节并解压
+   - 因此不会因为「包太大 / 文件太大」而跳过任何文件
    ============================================================ */
 (function (global) {
   'use strict';
@@ -7,8 +12,9 @@
   var SIG_EOCD = 0x06054b50;
   var SIG_CD = 0x02014b50;
   var SIG_LOCAL = 0x04034b50;
-  var MAX_FILE = 40 * 1024 * 1024;     // 单文件超过此大小不载入（PDF 可到 40MB）
-  var MAX_TOTAL = 80 * 1024 * 1024;    // 解压总量上限
+
+  var MAX_FILES = 50000;               // 条目数量上限（防目录异常）
+  var MAX_ENTRY = 1024 * 1024 * 1024;  // 单入口 1GB，纯粹防御性上限
 
   var SKIP_PATHS = [
     /^__MACOSX(\/|$)/i,
@@ -51,41 +57,6 @@
     return false;
   }
 
-  function byteEntropy(bytes) {
-    var n = Math.min(bytes.length, 4096);
-    if (!n) return 0;
-    var freq = new Array(256).fill(0);
-    for (var i = 0; i < n; i++) freq[bytes[i]]++;
-    var e = 0;
-    for (var j = 0; j < 256; j++) {
-      if (freq[j]) {
-        var p = freq[j] / n;
-        e -= p * Math.log2(p);
-      }
-    }
-    return e;
-  }
-
-  /**
-   * 加密文件 / 二进制 / 乱码内容 → 返回 true（导入时跳过）
-   */
-  function looksUnreadable(bytes) {
-    if (!bytes || !bytes.length) return true;
-    if (isBinary(bytes)) return true;
-    if (bytes.length > 256 && byteEntropy(bytes) > 7.4) return true;
-    var dec = decodeText(bytes.subarray(0, Math.min(bytes.length, 4096)));
-    var s = dec.text;
-    if (!s.length) return true;
-    var bad = 0;
-    for (var i = 0; i < s.length; i++) {
-      var c = s.charCodeAt(i);
-      if (c === 0xFFFD) bad++;
-      else if (c < 0x20 && c !== 9 && c !== 10 && c !== 13) bad++;
-      else if (c >= 0xE000 && c <= 0xF8FF) bad++;
-    }
-    return bad / s.length > 0.02;
-  }
-
   function decodeText(bytes) {
     if (bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
       bytes = bytes.subarray(3);
@@ -114,125 +85,97 @@
     return new Uint8Array(buf);
   }
 
-  function findEocd(dv, len) {
-    var start = len - 22;
-    var floor = Math.max(0, len - 22 - 65535);
-    for (var i = start; i >= floor; i--) {
-      if (dv.getUint32(i, true) === SIG_EOCD) return i;
+  /** 读取单个条目（只读这一个文件对应的字节） */
+  async function readEntry(file, m) {
+    var head = new Uint8Array(await file.slice(m.offset, m.offset + 30).arrayBuffer());
+    var hv = new DataView(head.buffer, head.byteOffset, head.byteLength);
+    if (head.length < 30 || hv.getUint32(0, true) !== SIG_LOCAL) {
+      throw new Error('ZIP 结构损坏：' + (m.path || ''));
     }
-    return -1;
+    var nl = hv.getUint16(26, true);
+    var el = hv.getUint16(28, true);
+    var start = m.offset + 30 + nl + el;
+    var end = start + m.csize;
+    if (end > file.size) throw new Error('ZIP 数据越界：' + (m.path || ''));
+    var raw = new Uint8Array(await file.slice(start, end).arrayBuffer());
+    if (m.method === 0) return raw;
+    if (m.method === 8) return await inflateRaw(raw);
+    throw new Error('不支持的压缩算法（method ' + m.method + '）');
   }
 
-  /**
-   * 读取 zip 中的所有文件
-   * @returns {Promise<{entries: Array, skipped: number, skippedSize: number}>}
-   */
-  /** 分块读入整个文件，边读边报进度（大文件也能看到百分比） */
-  async function readWholeFile(file, onProgress) {
-    var CHUNK = 4 * 1024 * 1024;
-    var out = new Uint8Array(file.size);
-    var off = 0;
-    while (off < file.size) {
-      var end = Math.min(off + CHUNK, file.size);
-      var part = new Uint8Array(await file.slice(off, end).arrayBuffer());
-      out.set(part, off);
-      off = end;
-      if (onProgress) onProgress(off, file.size);
-      await new Promise(function (r) { setTimeout(r, 0); });
-    }
-    return out;
-  }
-
+  /** 只解析中央目录；不读取、不解压任何文件内容 */
   async function readZip(file, onProgress) {
-    var buf = await readWholeFile(file, function (done, total) {
-      if (onProgress) onProgress({ phase: 'read', done: done, total: total });
-    });
-    var dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    var size = file.size;
+    if (size < 22) throw new Error('不是有效的 ZIP 文件');
 
-    var eocd = findEocd(dv, buf.length);
+    var tailLen = Math.min(size, 66000);
+    var tail = new Uint8Array(await file.slice(size - tailLen).arrayBuffer());
+    var dv = new DataView(tail.buffer, tail.byteOffset, tail.byteLength);
+    var eocd = -1;
+    for (var i = tail.length - 22; i >= 0; i--) {
+      if (dv.getUint32(i, true) === SIG_EOCD) { eocd = i; break; }
+    }
     if (eocd < 0) throw new Error('不是有效的 ZIP 文件（找不到目录结构）');
 
     var count = dv.getUint16(eocd + 10, true);
+    var cdSize = dv.getUint32(eocd + 12, true);
     var cdOffset = dv.getUint32(eocd + 16, true);
     if (count === 0xffff || cdOffset === 0xffffffff) {
       throw new Error('暂不支持 ZIP64 格式，请用普通 zip 重新压缩');
     }
-    if (cdOffset >= buf.length) throw new Error('ZIP 目录损坏');
+    if (cdOffset + cdSize > size) throw new Error('ZIP 目录损坏');
 
-    var metas = [];
-    var p = cdOffset;
-    for (var i = 0; i < count; i++) {
-      if (p + 46 > buf.length || dv.getUint32(p, true) !== SIG_CD) break;
-      var flags = dv.getUint16(p + 8, true);
-      var method = dv.getUint16(p + 10, true);
-      var csize = dv.getUint32(p + 20, true);
-      var usize = dv.getUint32(p + 24, true);
-      var nameLen = dv.getUint16(p + 28, true);
-      var extraLen = dv.getUint16(p + 30, true);
-      var commentLen = dv.getUint16(p + 32, true);
-      var localOffset = dv.getUint32(p + 42, true);
-      var nameBytes = buf.subarray(p + 46, p + 46 + nameLen);
+    var cd = new Uint8Array(await file.slice(cdOffset, cdOffset + cdSize).arrayBuffer());
+    var cv = new DataView(cd.buffer, cd.byteOffset, cd.byteLength);
+
+    var entries = [];
+    var skipped = 0;
+    var p = 0;
+    for (var k = 0; k < count; k++) {
+      if (p + 46 > cd.length || cv.getUint32(p, true) !== SIG_CD) break;
+      var flags = cv.getUint16(p + 8, true);
+      var method = cv.getUint16(p + 10, true);
+      var csize = cv.getUint32(p + 20, true);
+      var usize = cv.getUint32(p + 24, true);
+      var nameLen = cv.getUint16(p + 28, true);
+      var extraLen = cv.getUint16(p + 30, true);
+      var commentLen = cv.getUint16(p + 32, true);
+      var localOffset = cv.getUint32(p + 42, true);
+      var nameBytes = cd.subarray(p + 46, p + 46 + nameLen);
       var name = decodeName(nameBytes, (flags & 0x800) !== 0);
       p += 46 + nameLen + extraLen + commentLen;
 
       if (!name || /\/$/.test(name) || /\\$/.test(name)) continue;
       if (shouldSkip(name)) continue;
-      if (flags & 0x1) continue;                    // 加密文件
-      metas.push({
+      if (flags & 0x1) { skipped++; continue; }               // 加密文件无法解压
+      if (usize > MAX_ENTRY || csize === 0xffffffff) { skipped++; continue; }
+      if (entries.length >= MAX_FILES) break;
+
+      entries.push({
         path: name.replace(/\\/g, '/'),
-        method: method,
-        csize: csize,
-        usize: usize,
-        offset: localOffset
-      });
-    }
-
-    var entries = [];
-    var skipped = 0;
-    var total = 0;
-
-    for (var k = 0; k < metas.length; k++) {
-      var m = metas[k];
-      try {
-        if (m.usize > MAX_FILE || m.csize === 0xffffffff) { skipped++; continue; }
-        if (total + m.usize > MAX_TOTAL) { skipped++; continue; }
-
-        var lh = m.offset;
-        if (lh + 30 > buf.length || dv.getUint32(lh, true) !== SIG_LOCAL) { skipped++; continue; }
-        var nl = dv.getUint16(lh + 26, true);
-        var el = dv.getUint16(lh + 28, true);
-        var start = lh + 30 + nl + el;
-        var end = start + m.csize;
-        if (start > buf.length || end > buf.length) { skipped++; continue; }
-        var raw = buf.subarray(start, end);
-
-        var data;
-        if (m.method === 0) {
-          data = raw;
-        } else if (m.method === 8) {
-          data = await inflateRaw(raw);
-        } else {
-          skipped++; continue;                        // 不支持的压缩算法
+        size: usize,
+        _zip: {
+          file: file,
+          offset: localOffset,
+          method: method,
+          csize: csize,
+          path: name
         }
+      });
 
-        // 记事本模式：所有文件都载入，乱码也原样显示
-        total += data.length;
-        entries.push({ path: m.path, size: data.length, data: data });
-      } catch (err) {
-        skipped++;
-      }
-      if (onProgress && (k % 3 === 0 || k === metas.length - 1)) {
-        onProgress({ phase: 'extract', done: k + 1, total: metas.length });
+      if (onProgress && k % 200 === 0) {
+        onProgress({ phase: 'scan', done: k + 1, total: count });
         await new Promise(function (r) { setTimeout(r, 0); });
       }
     }
 
     if (!entries.length) throw new Error('压缩包里没有可读取的文件');
+    if (onProgress) onProgress({ phase: 'scan', done: count, total: count });
     return { entries: entries, skipped: skipped, skippedSize: 0 };
   }
 
   /**
-   * 读取用户选择的对象：zip 解压，普通文本直接作为单文件项目
+   * 读取用户选择的对象：zip 只解析目录；单个文件也走懒加载
    */
   async function readAny(file, onProgress) {
     var head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
@@ -240,25 +183,17 @@
                 (head[2] === 0x03 || head[2] === 0x05 || head[2] === 0x07);
 
     if (isZip) {
-      var res = await readZip(file, onProgress);
-      return {
-        isZip: true,
-        name: file.name.replace(/\.zip$/i, ''),
-        entries: res.entries,
-        skipped: res.skipped
-      };
+      return await readZip(file, onProgress);
     }
 
     if (/\.(tar|gz|tgz|rar|7z|bz2|xz)$/i.test(file.name)) {
       throw new Error('暂不支持该压缩格式，请先压缩成 .zip');
     }
 
-    var bytes = new Uint8Array(await file.arrayBuffer());
-    if (isBinary(bytes)) throw new Error('这不是 zip 包，也不是文本文件');
     return {
       isZip: false,
       name: file.name,
-      entries: [{ path: file.name, size: bytes.length, data: bytes }],
+      entries: [{ path: file.name, size: file.size, _file: file }],
       skipped: 0
     };
   }
@@ -266,8 +201,8 @@
   global.ZipReader = {
     readAny: readAny,
     readZip: readZip,
+    readEntry: readEntry,
     decodeText: decodeText,
-    isBinary: isBinary,
-    looksUnreadable: looksUnreadable
+    isBinary: isBinary
   };
 })(window);

@@ -1068,3 +1068,13 @@ body.tab-pdf .notes-panel { display: none !important; }
 @media (max-width: 880px) {
   .progress { top: calc(var(--inset-top, 0px) + 54px); }
 }
+
+/* 二进制文件预览 */
+.hexdump {
+  margin: 10px 12px 20px; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: var(--panel-2);
+  font: 11.5px/1.55 var(--font-mono);
+  white-space: pre; overflow: auto;
+  color: var(--muted);
+}
