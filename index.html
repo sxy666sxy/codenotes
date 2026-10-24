@@ -120,6 +120,9 @@
         <button class="icon-btn sm" id="btnCollapse" title="全部折叠" aria-label="全部折叠">
           <svg class="ico sm"><use href="#i-up"/></svg>
         </button>
+        <button class="icon-btn sm" id="btnClearAll" title="清空项目" aria-label="清空项目">
+          <svg class="ico sm"><use href="#i-trash"/></svg>
+        </button>
       </div>
 
       <nav class="tree" id="tree"></nav>
@@ -304,6 +307,9 @@
     </button>
     <button class="lp-item danger" id="lpRemoveFile">
       <svg class="ico sm"><use href="#i-x"/></svg><span>从项目中移除该文件</span>
+    </button>
+    <button class="lp-item danger" id="lpRemoveDir" hidden>
+      <svg class="ico sm"><use href="#i-trash"/></svg><span id="lpRemoveDirText">清除此文件夹</span>
     </button>
     <button class="lp-item" id="lpCancel"><span>取消</span></button>
   </div>

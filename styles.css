@@ -1101,3 +1101,21 @@ body.tab-pdf .notes-panel { display: none !important; }
 .lp-item:hover { background: var(--hover); }
 .lp-item.danger { color: #d9534f; }
 .lp-item span { flex: 1; }
+
+/* PDF 右侧目录：一级（PDF 名称）/ 二级（书签） */
+.po-lib {
+  display: flex; align-items: center; gap: 4px;
+  padding: 8px 8px; margin: 1px 4px;
+  border-radius: 8px; cursor: pointer;
+  font-size: 12.5px; color: var(--text);
+}
+.po-lib:hover { background: var(--hover); }
+.po-lib.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.po-chev {
+  flex: none; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center;
+  border-radius: 5px; color: var(--muted);
+}
+.po-chev svg { transition: transform .15s ease; }
+.po-lib.open .po-chev svg { transform: rotate(90deg); }
+.po-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.po-sub { padding: 2px 0 6px; }

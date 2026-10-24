@@ -68,7 +68,7 @@
 
   var esc = function (s) { return HL.escape(String(s == null ? '' : s)); };
 
-  var APP_VERSION = '1.5.3';
+  var APP_VERSION = '1.6.0';
   var AI_PRESETS = [
     { id: 'deepseek', name: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
     { id: 'openai', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
@@ -477,6 +477,91 @@
       setTimeout(hideProgress, 380);
       idle();
     }
+  }
+
+  function countUnderPath(dirPath) {
+    if (!state.project) return 0;
+    var prefix = dirPath + '/';
+    return state.project.entries.filter(function (e) {
+      return e.path.indexOf(prefix) === 0;
+    }).length;
+  }
+
+  /** 清空整个项目（文件和注释都清掉，压缩包原文件不动） */
+  function clearProject() {
+    if (!state.project) return;
+    var sig = state.sig;
+    if (sig) delete store.projects[sig];
+    state.project = null;
+    state.sig = '';
+    state.current = null;
+    state.text = '';
+    state.lines = [];
+    state.expanded = new Set();
+    state.treeNotes = {};
+    $('#editor').hidden = true;
+    $('#welcome').hidden = false;
+    $('#notesPanel').hidden = true;
+    renderTree();
+    renderProjectCard();
+    renderNoteStat();
+    saveStore();
+    if (isMobile()) setSidebar(true, false);
+    toast('已清空项目');
+  }
+
+  /** 清除某个文件夹下的所有文件（含注释） */
+  function removeFolder(dirPath) {
+    if (!state.project) return;
+    var prefix = dirPath + '/';
+    var oldSig = state.sig;
+    var removed = 0;
+
+    var entries = state.project.entries.filter(function (e) {
+      if (e.path.indexOf(prefix) === 0) { removed++; return false; }
+      return true;
+    });
+    if (!removed) { toast('这个文件夹是空的'); return; }
+
+    state.project.entries = entries;
+    state.project.byPath = new Map();
+    entries.forEach(function (e) { state.project.byPath.set(e.path, e); });
+    state.project.tree = buildTree(entries);
+    if (state.project.textCache) {
+      Array.from(state.project.textCache.keys()).forEach(function (k) {
+        if (k.indexOf(prefix) === 0) state.project.textCache.delete(k);
+      });
+    }
+    state.sig = signature(state.project.name, entries);
+
+    if (oldSig && oldSig !== state.sig && store.projects[oldSig] && !store.projects[state.sig]) {
+      store.projects[state.sig] = store.projects[oldSig];
+    }
+
+    var bucket = ensureBucket();
+    Object.keys(bucket.notes || {}).forEach(function (k) {
+      if (k.indexOf(prefix) === 0) delete bucket.notes[k];
+    });
+    Object.keys(state.treeNotes || {}).forEach(function (k) {
+      if (k === dirPath || k.indexOf(prefix) === 0) delete state.treeNotes[k];
+    });
+    bucket.treeNotes = Object.assign({}, state.treeNotes);
+    saveStore();
+
+    renderProjectCard();
+    renderTree();
+    renderNoteStat();
+
+    if (state.current && state.current.indexOf(prefix) === 0) {
+      state.current = null;
+      state.text = '';
+      state.lines = [];
+      $('#editor').hidden = true;
+      $('#welcome').hidden = false;
+    } else if (state.current) {
+      openFile(state.current);
+    }
+    toast('已清除该文件夹下的 ' + removed + ' 个文件');
   }
 
   /** 从当前项目里移除一个文件（不影响磁盘上的压缩包） */
@@ -1660,7 +1745,10 @@
         var rec = pdfState.pending;
         pdfState.pending = null;
         openPdfData(new Uint8Array(rec.data), rec.name).then(function () {
+          var match = pdfState.library.filter(function (it) { return it.name === rec.name; })[0];
+          if (match) pdfState.curId = match.id;
           if (rec.page && rec.page > 1) goToPage(rec.page);
+          buildOutline();
         });
       }
       $('#editor').hidden = true;
@@ -1697,7 +1785,8 @@
     doc: null, name: '', scale: 1, fit: true,
     baseW: 595, baseH: 842, pages: [],
     observer: null, current: 1, previewScale: 0,
-    zipPdfs: [], lastData: null, transScale: 1, pending: null
+    zipPdfs: [], lastData: null, transScale: 1, pending: null,
+    library: [], libOpen: {}, libOutline: {}, curId: ''
   };
   var transCache = {};
   (function loadTransCache() {
@@ -1738,12 +1827,114 @@
   function openPdfFile(file) {
     if (!file) return;
     pdfState.zipPdfs = [];
-    busy('正在打开 PDF…');
+    busy('正在导入 PDF…');
     file.arrayBuffer().then(function (buf) {
-      openPdfData(new Uint8Array(buf), file.name);
-    }).catch(function () {
-      toast('读取 PDF 失败');
+      var bytes = new Uint8Array(buf);
+      var item = addPdfToLibrary({ name: file.name, kind: 'file', data: bytes });
+      return openLibItem(item);
+    }).catch(function (err) {
+      toast('读取 PDF 失败：' + ((err && err.message) || ''));
     }).then(function () { idle(); });
+  }
+
+  /* ---------------- PDF 库（右侧一级目录） ---------------- */
+  function pdfId() {
+    return 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  }
+
+  function addPdfToLibrary(item) {
+    var it = {
+      id: item.id || pdfId(),
+      name: item.name || '未命名.pdf',
+      kind: item.kind || 'file',
+      data: item.data || null,
+      entry: item.entry || null
+    };
+    pdfState.library.push(it);
+    savePdfLibrary();
+    return it;
+  }
+
+  function savePdfLibrary() {
+    try {
+      var list = pdfState.library.filter(function (it) { return it.kind === 'file' && it.data; })
+        .map(function (it) { return { id: it.id, name: it.name, data: it.data }; });
+      idbPut('pdfLib', list).catch(function () { /* 存不下就算了 */ });
+    } catch (e) { /* 忽略 */ }
+  }
+
+  function loadPdfLibrary() {
+    idbGet('pdfLib').then(function (list) {
+      if (!Array.isArray(list) || !list.length) return;
+      list.forEach(function (it) {
+        if (!it || !it.data) return;
+        if (pdfState.library.some(function (x) { return x.id === it.id; })) return;
+        pdfState.library.push({ id: it.id, name: it.name, kind: 'file', data: it.data });
+      });
+      buildOutline();
+    }).catch(function () { /* 忽略 */ });
+  }
+
+  async function openLibItem(item) {
+    if (!item) return;
+    if (pdfState.doc && pdfState.curId === item.id) { setTab('pdf'); return; }
+    try {
+      var bytes;
+      if (item.kind === 'zip' && item.entry) {
+        busy('正在读取 PDF…');
+        bytes = await getEntryBytes(item.entry);
+      } else {
+        bytes = item.data;
+      }
+      if (!bytes) throw new Error('内容丢失，请重新导入');
+      pdfState.curId = item.id;
+      await openPdfData(new Uint8Array(bytes), item.name);
+    } catch (err) {
+      toast('打开 PDF 失败：' + ((err && err.message) || ''));
+    } finally {
+      idle();
+    }
+  }
+
+  async function removePdfItem(item) {
+    var idx = pdfState.library.indexOf(item);
+    if (idx >= 0) pdfState.library.splice(idx, 1);
+    delete pdfState.libOpen[item.id];
+    delete pdfState.libOutline[item.id];
+    savePdfLibrary();
+
+    if (pdfState.curId === item.id) {
+      pdfState.curId = '';
+      if (pdfState.doc) { try { pdfState.doc.destroy(); } catch (e) {} pdfState.doc = null; }
+      pdfState.name = '';
+      $('#pdfName').textContent = '未打开文件';
+      $('#pdfPages').innerHTML = '';
+      $('#pdfEmpty').hidden = false;
+      setPdfPageLabel(1, 0, true);
+    }
+    buildOutline();
+    toast('已删除这个 PDF');
+  }
+
+  async function outlineOfItem(item, token) {
+    if (pdfState.libOutline[item.id]) return pdfState.libOutline[item.id];
+    var outline = null;
+    try {
+      if (pdfState.doc && pdfState.curId === item.id) {
+        outline = await pdfState.doc.getOutline();
+      } else {
+        var bytes = item.kind === 'zip' && item.entry ? await getEntryBytes(item.entry) : item.data;
+        if (bytes) {
+          var task = pdfjsLib.getDocument({ data: new Uint8Array(bytes), isEvalSupported: false });
+          var doc = await task.promise;
+          try { outline = await doc.getOutline(); } catch (e) { outline = null; }
+          try { doc.destroy(); } catch (e) {}
+        }
+      }
+    } catch (e) { outline = null; }
+    if (token && token !== outlineSeq) return outline;
+    pdfState.libOutline[item.id] = outline || [];
+    return pdfState.libOutline[item.id];
   }
 
   async function importPdfZip(file) {
@@ -1756,8 +1947,16 @@
       pdfState.zipPdfs = pdfs.map(function (e) {
         return { name: e.path.split('/').pop(), path: e.path, entry: e };
       });
-      var firstPdfBytes = await getEntryBytes(pdfs[0]);
-      await openPdfData(new Uint8Array(firstPdfBytes), pdfs[0].path.split('/').pop());
+      var firstItem = null;
+      pdfs.forEach(function (e) {
+        var it = addPdfToLibrary({
+          name: e.path.split('/').pop(),
+          kind: 'zip',
+          entry: e
+        });
+        if (!firstItem) firstItem = it;
+      });
+      await openLibItem(firstItem);
       setPdfOutline(true);
       if (pdfs.length > 1) toast('压缩包里有 ' + pdfs.length + ' 个 PDF，右侧目录可切换');
     } catch (err) {
@@ -2103,61 +2302,106 @@
   var outlineTrans = null;
   async function buildOutline() {
     var body = $('#poBody');
-    if (!body || !pdfState.doc) return;
+    if (!body) return;
     var token = ++outlineSeq;
     body.innerHTML = '';
 
-    // 压缩包里的 PDF（始终显示，方便快速切换）
-    if (pdfState.zipPdfs && pdfState.zipPdfs.length) {
-      var list = document.createElement('div');
-      pdfState.zipPdfs.forEach(function (item) {
-        var btn = document.createElement('button');
-        btn.className = 'po-item' + (item.name === pdfState.name ? ' on' : '');
-        btn.textContent = item.path || item.name;
-        btn.title = item.path || item.name;
-        btn.addEventListener('click', function () {
-          busy('正在读取 PDF…');
-          getEntryBytes(item.entry).then(function (bytes) {
-            return openPdfData(new Uint8Array(bytes), item.name);
-          }).catch(function (err) {
-            toast('打开失败：' + ((err && err.message) || ''));
-          }).then(function () { idle(); });
-        });
-        list.appendChild(btn);
-      });
-      body.appendChild(poSection('压缩包内的 PDF（' + pdfState.zipPdfs.length + ' 个）', list));
+    if (!pdfState.library.length) {
+      var tip = document.createElement('div');
+      tip.className = 'po-title';
+      tip.textContent = '还没有 PDF，用顶部 PDF 图标逐个导入';
+      body.appendChild(tip);
+      return;
     }
 
-    var outline = null;
-    try { outline = await pdfState.doc.getOutline(); } catch (e) { outline = null; }
-    if (token !== outlineSeq) return;
-    if (outline && outline.length) {
-      var list2 = document.createElement('div');
-      outlineItemsFlat = [];
-      (function add(items, depth) {
-        items.forEach(function (it) {
-          var idx = outlineItemsFlat.push({ title: it.title || '(未命名)', dest: it.dest }) - 1;
-          var btn = document.createElement('button');
-          btn.className = 'po-item';
-          btn.style.paddingLeft = (8 + depth * 12) + 'px';
-          var label = outlineTrans && outlineTrans[idx] ? outlineTrans[idx] : (it.title || '(未命名)');
-          btn.textContent = label;
-          btn.title = outlineTrans && outlineTrans[idx]
-            ? (it.title || '') + ' → ' + outlineTrans[idx]
-            : (it.title || '');
-          btn.addEventListener('click', function () { jumpToDest(it.dest); });
-          list2.appendChild(btn);
-          if (it.items && it.items.length) add(it.items, depth + 1);
-        });
-      })(outline, 0);
-      body.appendChild(poSection('当前 PDF 书签' + (outlineTrans ? '（已翻译）' : ''), list2));
-    } else {
-      var empty = document.createElement('div');
-      empty.className = 'po-title';
-      empty.textContent = '这个 PDF 没有书签目录';
-      body.appendChild(empty);
-    }
+    for (var i = 0; i < pdfState.library.length; i++) {
+      var item = pdfState.library[i];
+      var isCur = pdfState.curId === item.id;
+      var open = !!pdfState.libOpen[item.id];
 
+      var row = document.createElement('div');
+      row.className = 'po-lib' + (isCur ? ' on' : '') + (open ? ' open' : '');
+      row.setAttribute('role', 'button');
+      row.tabIndex = 0;
+
+      var chev = document.createElement('span');
+      chev.className = 'po-chev';
+      chev.innerHTML = '<svg class="ico sm"><use href="#i-chev"/></svg>';
+      chev.title = open ? '收起书签' : '展开书签';
+
+      var nameEl = document.createElement('span');
+      nameEl.className = 'po-name';
+      nameEl.textContent = item.name;
+
+      row.appendChild(chev);
+      row.appendChild(nameEl);
+      body.appendChild(row);
+
+      chev.addEventListener('click', function (it, ev) {
+        ev.stopPropagation();
+        pdfState.libOpen[it.id] = !pdfState.libOpen[it.id];
+        buildOutline();
+      }.bind(null, item));
+
+      nameEl.addEventListener('click', function (it) { openLibItem(it); }.bind(null, item));
+
+      (function (it, el) {
+        var timer = 0;
+        el.addEventListener('pointerdown', function (e) {
+          if (e.target.closest('.po-chev')) return;
+          clearTimeout(timer);
+          timer = setTimeout(function () {
+            openModal('删除 PDF', '<p>从列表删除「' + esc(it.name) + '」？删除后需要重新导入。</p>', [
+              { label: '取消', onClick: closeModal },
+              { label: '删除', primary: true, onClick: function () { closeModal(); removePdfItem(it); } }
+            ]);
+          }, 520);
+        });
+        ['pointerup', 'pointermove', 'pointercancel', 'pointerleave'].forEach(function (ev) {
+          el.addEventListener(ev, function () { clearTimeout(timer); });
+        });
+      })(item, row);
+
+      if (open) {
+        var sub = document.createElement('div');
+        sub.className = 'po-sub';
+        body.appendChild(sub);
+        var items = await outlineOfItem(item, token);
+        if (token !== outlineSeq) return;
+        if (items && items.length) {
+          outlineItemsFlat = isCur ? [] : outlineItemsFlat;
+          renderOutlineItems(sub, items, 0, isCur);
+        } else {
+          var t = document.createElement('div');
+          t.className = 'po-title';
+          t.style.paddingLeft = '24px';
+          t.textContent = '没有书签目录';
+          sub.appendChild(t);
+        }
+      }
+    }
+  }
+
+  function renderOutlineItems(host, items, depth, isCurrent) {
+    items.forEach(function (it) {
+      var idx = -1;
+      if (isCurrent) {
+        idx = outlineItemsFlat.push({ title: it.title || '(未命名)', dest: it.dest }) - 1;
+      }
+      var btn = document.createElement('button');
+      btn.className = 'po-item po-sub-item';
+      btn.style.paddingLeft = (18 + depth * 12) + 'px';
+      var label = (isCurrent && outlineTrans && outlineTrans[idx])
+        ? outlineTrans[idx]
+        : (it.title || '(未命名)');
+      btn.textContent = label;
+      btn.title = (isCurrent && outlineTrans && outlineTrans[idx])
+        ? (it.title || '') + ' → ' + outlineTrans[idx]
+        : (it.title || '');
+      btn.addEventListener('click', function () { jumpToDest(it.dest); });
+      host.appendChild(btn);
+      if (it.items && it.items.length) renderOutlineItems(host, it.items, depth + 1, isCurrent);
+    });
   }
 
   async function translateOutline() {
@@ -3853,13 +4097,25 @@
     var lpFired = false;
     var lpPath = '';
 
+    var lpKind = 'file';
+
     function closeLp() {
       $('#lpMenu').hidden = true;
     }
 
-    function openLp(path, name, x, y) {
+    function openLp(path, name, x, y, kind) {
       lpPath = path;
+      lpKind = kind || 'file';
       $('#lpTitle').textContent = name || path;
+      var isDir = lpKind === 'dir';
+      $('#lpClearNotes').hidden = isDir;
+      $('#lpRemoveFile').hidden = isDir;
+      var dirBtn = $('#lpRemoveDir');
+      dirBtn.hidden = !isDir;
+      if (isDir) {
+        var n = countUnderPath(path);
+        $('#lpRemoveDirText').textContent = '清除此文件夹（' + n + ' 个文件）';
+      }
       var menu = $('#lpMenu');
       menu.hidden = false;
       var w = menu.offsetWidth || 190;
@@ -3872,17 +4128,18 @@
 
     $('#tree').addEventListener('pointerdown', function (e) {
       var row = e.target.closest('.trow');
-      if (!row || row.dataset.kind !== 'file') return;
+      if (!row) return;
       if (e.target.closest('.row-edit')) return;
       lpFired = false;
       var path = row.dataset.path;
       var name = row.dataset.name;
+      var kind = row.dataset.kind;
       var x = e.clientX;
       var y = e.clientY;
       clearTimeout(lpTimer);
       lpTimer = setTimeout(function () {
         lpFired = true;
-        openLp(path, name, x, y);
+        openLp(path, name, x, y, kind);
       }, 520);
     });
 
@@ -3916,6 +4173,20 @@
       var p = lpPath;
       closeLp();
       if (p) removeFromProject(p);
+    });
+
+    $('#lpRemoveDir').addEventListener('click', function () {
+      var p = lpPath;
+      closeLp();
+      if (p) removeFolder(p);
+    });
+
+    $('#btnClearAll').addEventListener('click', function () {
+      if (!state.project) { toast('还没有导入项目'); return; }
+      openModal('清空项目', '<p>会移除当前项目的全部文件和注释（不影响你的压缩包原文件）。确定吗？</p>', [
+        { label: '取消', onClick: closeModal },
+        { label: '清空', primary: true, onClick: function () { closeModal(); clearProject(); } }
+      ]);
     });
 
     $('#tree').addEventListener('click', function (e) {
@@ -4184,6 +4455,7 @@
       restoreLast();
     }
 
+    loadPdfLibrary();
     if (!new URLSearchParams(location.search).get('norestore')) setTimeout(restorePdfSession, 900);
 
     // PWA：离线可用（http/https 下才注册）
