@@ -85,6 +85,69 @@
     return new Uint8Array(buf);
   }
 
+  /** 把文件的某一段包装成流（按 1MB 分块，避免整块进内存） */
+  function sliceStream(file, start, end) {
+    var pos = start;
+    return new ReadableStream({
+      pull: function (controller) {
+        if (pos >= end) { controller.close(); return; }
+        var stop = Math.min(pos + 1024 * 1024, end);
+        return file.slice(pos, stop).arrayBuffer().then(function (buf) {
+          pos = stop;
+          controller.enqueue(new Uint8Array(buf));
+        });
+      }
+    });
+  }
+
+  /**
+   * 只解出条目的前 maxBytes 字节（用于探测是否二进制、超大文本预览）
+   * 流式解压 + 提前取消，不用把整个文件读进内存
+   */
+  async function readEntryHead(file, m, maxBytes) {
+    var head = new Uint8Array(await file.slice(m.offset, m.offset + 30).arrayBuffer());
+    var hv = new DataView(head.buffer, head.byteOffset, head.byteLength);
+    if (head.length < 30 || hv.getUint32(0, true) !== SIG_LOCAL) {
+      throw new Error('ZIP 结构损坏：' + (m.path || ''));
+    }
+    var nl = hv.getUint16(26, true);
+    var el = hv.getUint16(28, true);
+    var start = m.offset + 30 + nl + el;
+    var end = start + m.csize;
+    if (end > file.size) throw new Error('ZIP 数据越界：' + (m.path || ''));
+
+    if (m.method === 0) {
+      var n = Math.min(maxBytes, end - start);
+      return new Uint8Array(await file.slice(start, start + n).arrayBuffer());
+    }
+    if (m.method !== 8) throw new Error('不支持的压缩算法（method ' + m.method + '）');
+
+    var stream = sliceStream(file, start, end).pipeThrough(new DecompressionStream('deflate-raw'));
+    var reader = stream.getReader();
+    var chunks = [];
+    var total = 0;
+    try {
+      while (total < maxBytes) {
+        var r = await reader.read();
+        if (r.done) break;
+        var chunk = r.value;
+        var remain = maxBytes - total;
+        if (chunk.length > remain) chunk = chunk.subarray(0, remain);
+        chunks.push(chunk);
+        total += chunk.length;
+      }
+    } finally {
+      try { reader.cancel(); } catch (e) { /* 忽略 */ }
+    }
+    var out = new Uint8Array(total);
+    var off = 0;
+    for (var i = 0; i < chunks.length; i++) {
+      out.set(chunks[i], off);
+      off += chunks[i].length;
+    }
+    return out;
+  }
+
   /** 读取单个条目（只读这一个文件对应的字节） */
   async function readEntry(file, m) {
     var head = new Uint8Array(await file.slice(m.offset, m.offset + 30).arrayBuffer());
@@ -202,6 +265,7 @@
     readAny: readAny,
     readZip: readZip,
     readEntry: readEntry,
+    readEntryHead: readEntryHead,
     decodeText: decodeText,
     isBinary: isBinary
   };

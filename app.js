@@ -68,7 +68,7 @@
 
   var esc = function (s) { return HL.escape(String(s == null ? '' : s)); };
 
-  var APP_VERSION = '1.5.0';
+  var APP_VERSION = '1.5.1';
   var AI_PRESETS = [
     { id: 'deepseek', name: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
     { id: 'openai', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
@@ -372,6 +372,28 @@
   /* ------------------------------------------------------------
      导入
   ------------------------------------------------------------ */
+  var OPEN_HEAD = 16 * 1024;                  // 先读 16KB 判断类型
+  var OPEN_TEXT_MAX = 24 * 1024 * 1024;       // 文本最多解出 24MB 用于预览
+
+  async function probeEntryHead(entry) {
+    if (entry._zip) return await ZipReader.readEntryHead(entry._zip.file, entry._zip, OPEN_HEAD);
+    if (entry._file) return new Uint8Array(await entry._file.slice(0, OPEN_HEAD).arrayBuffer());
+    if (entry.data) return entry.data.subarray(0, OPEN_HEAD);
+    if (entry._url) {
+      var resp = await fetch(entry._url);
+      var buf = new Uint8Array(await resp.arrayBuffer());
+      entry.data = buf;
+      return buf.subarray(0, OPEN_HEAD);
+    }
+    return new Uint8Array(0);
+  }
+
+  async function readEntryLimited(entry, maxBytes) {
+    if (entry._zip) return await ZipReader.readEntryHead(entry._zip.file, entry._zip, maxBytes);
+    if (entry.data) return entry.data.subarray(0, maxBytes);
+    return await getEntryBytes(entry);
+  }
+
   async function getEntryBytes(entry) {
     if (entry.data) return entry.data;
     if (entry._zip) {
@@ -560,7 +582,6 @@
     state.lines = [];
     state.selectedLine = null;
     state.composerSaved = '';
-    $('#welcome').hidden = true;
     $('#notesPanel').hidden = false;
 
     renderProjectCard();
@@ -589,13 +610,24 @@
       return a.path.split('/').length - b.path.split('/').length;
     });
     if (readmes.length) return readmes[0];
-    // 其次是层级最浅、名字最靠前的文件
-    return entries.slice().sort(function (a, b) {
+
+    // 优先文本/代码文件，且不要太大；PDF 不自动打开
+    var TEXT_RE = /\.(md|markdown|txt|log|js|jsx|mjs|cjs|ts|tsx|json|css|scss|less|html?|xml|ya?ml|toml|ini|cfg|conf|properties|gradle|py|java|kt|kts|c|h|cc|cpp|hpp|cs|go|rs|rb|php|sh|bash|sql|vue|svelte|swift|m|mm|lua|dart|r|pl)$/i;
+    var sorted = entries.slice().sort(function (a, b) {
       var da = a.path.split('/').length;
       var db = b.path.split('/').length;
       if (da !== db) return da - db;
       return a.path.localeCompare(b.path, 'zh-Hans-CN', { numeric: true });
-    })[0];
+    });
+    var texts = sorted.filter(function (e) {
+      return TEXT_RE.test(e.path) && !/\.pdf$/i.test(e.path) && (e.size || 0) <= 8 * 1024 * 1024;
+    });
+    if (texts.length) return texts[0];
+
+    // 再退一步：任何非 PDF 文件
+    var nonPdf = sorted.filter(function (e) { return !/\.pdf$/i.test(e.path); });
+    if (nonPdf.length) return nonPdf[0];
+    return sorted[0];
   }
 
   /* ------------------------------------------------------------
@@ -896,25 +928,31 @@
         text = cached.text;
         enc = cached.enc;
       } else {
-        var bytes;
+        var head;
         try {
-          bytes = await getEntryBytes(entry);
+          head = await probeEntryHead(entry);
         } catch (err) {
           toast('读取失败：' + ((err && err.message) || ''));
           return;
         }
         if (openToken !== openSeq) return;
 
-        if (ZipReader.isBinary(bytes)) {
+        if (ZipReader.isBinary(head)) {
           state.binary = true;
-          state.binaryLen = bytes.length;
-          state.notice = '二进制文件 · ' + fmtSize(bytes.length) + '｜仍可写整体注释';
-          state.hex = hexPreview(bytes, 4096);
+          state.binaryLen = entry.size || head.length;
+          state.notice = '二进制文件 · ' + fmtSize(entry.size || head.length) + '｜仍可写整体注释';
+          state.hex = hexPreview(head, 4080);
         } else {
+          var limited = (entry.size || 0) > OPEN_TEXT_MAX;
+          var bytes = limited
+            ? await readEntryLimited(entry, OPEN_TEXT_MAX)
+            : await getEntryBytes(entry);
+          if (openToken !== openSeq) return;
           var dec = ZipReader.decodeText(bytes);
           text = dec.text;
           enc = dec.enc;
-          state.project.textCache.set(path, dec);
+          if (limited) state.truncated = true;
+          else state.project.textCache.set(path, dec);
         }
       }
     }
