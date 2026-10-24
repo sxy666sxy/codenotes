@@ -68,7 +68,7 @@
 
   var esc = function (s) { return HL.escape(String(s == null ? '' : s)); };
 
-  var APP_VERSION = '1.6.0';
+  var APP_VERSION = '1.6.1';
   var AI_PRESETS = [
     { id: 'deepseek', name: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
     { id: 'openai', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
@@ -2306,80 +2306,73 @@
     var token = ++outlineSeq;
     body.innerHTML = '';
 
+    // ---------- 菜单一：已加载的 PDF ----------
+    var fileList = document.createElement('div');
+    fileList.className = 'po-list';
+
     if (!pdfState.library.length) {
       var tip = document.createElement('div');
       tip.className = 'po-title';
-      tip.textContent = '还没有 PDF，用顶部 PDF 图标逐个导入';
-      body.appendChild(tip);
-      return;
-    }
+      tip.textContent = '还没有 PDF，用顶部 PDF 图标导入';
+      fileList.appendChild(tip);
+    } else {
+      pdfState.library.forEach(function (item) {
+        var isCur = pdfState.curId === item.id;
+        var btn = document.createElement('button');
+        btn.className = 'po-file' + (isCur ? ' on' : '');
+        btn.title = item.name;
+        btn.innerHTML = '<svg class="ico sm"><use href="#i-pdf"/></svg><span class="po-fname"></span>';
+        btn.querySelector('.po-fname').textContent = item.name;
+        if (isCur) {
+          var dot = document.createElement('span');
+          dot.className = 'po-cur-dot';
+          btn.appendChild(dot);
+        }
+        btn.addEventListener('click', function () { openLibItem(item); });
 
-    for (var i = 0; i < pdfState.library.length; i++) {
-      var item = pdfState.library[i];
-      var isCur = pdfState.curId === item.id;
-      var open = !!pdfState.libOpen[item.id];
-
-      var row = document.createElement('div');
-      row.className = 'po-lib' + (isCur ? ' on' : '') + (open ? ' open' : '');
-      row.setAttribute('role', 'button');
-      row.tabIndex = 0;
-
-      var chev = document.createElement('span');
-      chev.className = 'po-chev';
-      chev.innerHTML = '<svg class="ico sm"><use href="#i-chev"/></svg>';
-      chev.title = open ? '收起书签' : '展开书签';
-
-      var nameEl = document.createElement('span');
-      nameEl.className = 'po-name';
-      nameEl.textContent = item.name;
-
-      row.appendChild(chev);
-      row.appendChild(nameEl);
-      body.appendChild(row);
-
-      chev.addEventListener('click', function (it, ev) {
-        ev.stopPropagation();
-        pdfState.libOpen[it.id] = !pdfState.libOpen[it.id];
-        buildOutline();
-      }.bind(null, item));
-
-      nameEl.addEventListener('click', function (it) { openLibItem(it); }.bind(null, item));
-
-      (function (it, el) {
         var timer = 0;
-        el.addEventListener('pointerdown', function (e) {
-          if (e.target.closest('.po-chev')) return;
+        btn.addEventListener('pointerdown', function (e) {
           clearTimeout(timer);
           timer = setTimeout(function () {
-            openModal('删除 PDF', '<p>从列表删除「' + esc(it.name) + '」？删除后需要重新导入。</p>', [
+            openModal('删除 PDF', '<p>从列表删除「' + esc(item.name) + '」？删除后需要重新导入。</p>', [
               { label: '取消', onClick: closeModal },
-              { label: '删除', primary: true, onClick: function () { closeModal(); removePdfItem(it); } }
+              { label: '删除', primary: true, onClick: function () { closeModal(); removePdfItem(item); } }
             ]);
           }, 520);
         });
         ['pointerup', 'pointermove', 'pointercancel', 'pointerleave'].forEach(function (ev) {
-          el.addEventListener(ev, function () { clearTimeout(timer); });
+          btn.addEventListener(ev, function () { clearTimeout(timer); });
         });
-      })(item, row);
 
-      if (open) {
-        var sub = document.createElement('div');
-        sub.className = 'po-sub';
-        body.appendChild(sub);
-        var items = await outlineOfItem(item, token);
-        if (token !== outlineSeq) return;
-        if (items && items.length) {
-          outlineItemsFlat = isCur ? [] : outlineItemsFlat;
-          renderOutlineItems(sub, items, 0, isCur);
-        } else {
-          var t = document.createElement('div');
-          t.className = 'po-title';
-          t.style.paddingLeft = '24px';
-          t.textContent = '没有书签目录';
-          sub.appendChild(t);
-        }
+        fileList.appendChild(btn);
+      });
+    }
+    body.appendChild(poSection('已加载的 PDF（' + pdfState.library.length + '）', fileList));
+
+    // ---------- 菜单二：当前 PDF 的目录 ----------
+    var curList = document.createElement('div');
+    curList.className = 'po-list';
+
+    if (!pdfState.doc) {
+      var t0 = document.createElement('div');
+      t0.className = 'po-title';
+      t0.textContent = '上面点一个 PDF 打开后，这里显示它的目录';
+      curList.appendChild(t0);
+    } else {
+      var outline = null;
+      try { outline = await pdfState.doc.getOutline(); } catch (e) { outline = null; }
+      if (token !== outlineSeq) return;
+      if (outline && outline.length) {
+        outlineItemsFlat = [];
+        renderOutlineItems(curList, outline, 0, true);
+      } else {
+        var t1 = document.createElement('div');
+        t1.className = 'po-title';
+        t1.textContent = '这个 PDF 没有书签目录';
+        curList.appendChild(t1);
       }
     }
+    body.appendChild(poSection('当前 PDF 目录' + (pdfState.name ? ' · ' + pdfState.name : ''), curList));
   }
 
   function renderOutlineItems(host, items, depth, isCurrent) {
@@ -2390,7 +2383,7 @@
       }
       var btn = document.createElement('button');
       btn.className = 'po-item po-sub-item';
-      btn.style.paddingLeft = (18 + depth * 12) + 'px';
+      btn.style.paddingLeft = (10 + depth * 12) + 'px';
       var label = (isCurrent && outlineTrans && outlineTrans[idx])
         ? outlineTrans[idx]
         : (it.title || '(未命名)');

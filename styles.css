@@ -1119,3 +1119,17 @@ body.tab-pdf .notes-panel { display: none !important; }
 .po-lib.open .po-chev svg { transform: rotate(90deg); }
 .po-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .po-sub { padding: 2px 0 6px; }
+
+/* PDF 目录：两个分区 */
+.po-list { padding: 2px 4px 6px; }
+.po-file {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  padding: 8px 9px; margin: 2px 0;
+  border: 0; border-radius: 8px; background: none;
+  color: var(--text); font: 12.5px var(--font-ui); text-align: left; cursor: pointer;
+}
+.po-file:hover { background: var(--hover); }
+.po-file.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.po-file .ico { flex: none; opacity: .8; }
+.po-fname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.po-cur-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
