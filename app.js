@@ -68,7 +68,7 @@
 
   var esc = function (s) { return HL.escape(String(s == null ? '' : s)); };
 
-  var APP_VERSION = '1.5.1';
+  var APP_VERSION = '1.5.2';
   var AI_PRESETS = [
     { id: 'deepseek', name: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
     { id: 'openai', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
@@ -4079,11 +4079,11 @@
         })
         .catch(function () { toast('示例压缩包载入失败'); })
         .then(function () { idle(); });
-    } else {
+    } else if (!new URLSearchParams(location.search).get('norestore')) {
       restoreLast();
     }
 
-    setTimeout(restorePdfSession, 900);
+    if (!new URLSearchParams(location.search).get('norestore')) setTimeout(restorePdfSession, 900);
 
     // PWA：离线可用（http/https 下才注册）
     if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {

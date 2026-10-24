@@ -212,9 +212,14 @@
         }
         var em = /^&[#A-Za-z0-9]+;/.exec(line.slice(i));
         if (em) { push('num', em[0]); i += em[0].length; continue; }
+        // 既不是合法标签也不是实体（例如 <?xml 、<!DOCTYPE 、孤立的 &）：
+        // 当作普通字符吃掉，否则 i 不会前进，会死循环
+        push(null, line[i]);
+        i++;
+        continue;
       }
 
-      var next = line.indexOf('<', i);
+      var next = line.indexOf('<', i + 1);
       if (next === -1) next = n;
       push(null, line.slice(i, next));
       i = next;
